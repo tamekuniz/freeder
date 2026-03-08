@@ -1,36 +1,109 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# freeder
 
-## Getting Started
+Feedly APIを使ったキーボード操作特化のRSSリーダー。
 
-First, run the development server:
+## 必要なもの
+
+- Node.js 20.x 以上
+- Feedlyアカウントとアクセストークン
+
+## インストール
+
+### Mac
+
+```bash
+# リポジトリをクローン
+git clone https://github.com/tamekuniz/freeder.git
+cd freeder
+
+# 依存パッケージをインストール
+npm install
+
+# 環境変数を設定
+cp .env.local.example .env.local
+# .env.local を編集して FEEDLY_ACCESS_TOKEN を設定
+```
+
+### Windows
+
+1. Node.js 20以上をインストール（https://nodejs.org/）
+2. Visual Studio Build Tools をインストール（better-sqlite3のコンパイルに必要）
+   - https://visualstudio.microsoft.com/visual-cpp-build-tools/
+   - 「C++ によるデスクトップ開発」ワークロードを選択
+
+```cmd
+# リポジトリをクローン
+git clone https://github.com/tamekuniz/freeder.git
+cd freeder
+
+# 依存パッケージをインストール
+npm install
+
+# 環境変数を設定
+copy .env.local.example .env.local
+# .env.local を編集して FEEDLY_ACCESS_TOKEN を設定
+```
+
+> Build Toolsの代わりに `npm install -g windows-build-tools` でも可。
+
+## Feedlyアクセストークンの取得
+
+1. https://feedly.com/v3/auth/dev にアクセス
+2. Googleアカウントでログイン
+3. 表示されたトークンを `.env.local` にコピー
+
+```env
+FEEDLY_ACCESS_TOKEN=xxxxxxxxxxxxxxx
+```
+
+## 起動
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+ブラウザで http://localhost:3000 を開く。
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## キーボードショートカット
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| キー | 動作 |
+|------|------|
+| j / k | 次/前の記事 |
+| h / l | 次/前のRSS |
+| H / L | 次/前の未読RSS |
+| g / ; | 次/前のフォルダ |
+| b | バックグラウンドで開く |
+| v | 記事プレビュー |
+| V | サイトプレビュー |
+| m | 未読切替 |
+| s | スター切替 |
+| +/- | フォント拡大/縮小 |
+| Ctrl+r | 同期 |
 
-## Learn More
+## 技術スタック
 
-To learn more about Next.js, take a look at the following resources:
+- Next.js 16 + React 19
+- TypeScript
+- Tailwind CSS 4
+- better-sqlite3（キャッシュ・設定保存）
+- Feedly API
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## データベース
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- `freeder-cache.db`（SQLite）がプロジェクトディレクトリに自動作成されます
+- 購読情報、記事、未読カウント、UI設定がキャッシュされます
+- Feedly APIに接続できないときはキャッシュから表示します
 
-## Deploy on Vercel
+## トラブルシューティング
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+**npm install で better-sqlite3 のビルドに失敗する（Windows）：**
+Visual Studio Build Tools の「C++ によるデスクトップ開発」がインストールされているか確認してください。
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+**npm install で better-sqlite3 のビルドに失敗する（Mac）：**
+Xcode Command Line Tools をインストールしてください: `xcode-select --install`
+
+**FEEDLY_ACCESS_TOKEN のエラー：**
+トークンの有効期限が切れている可能性があります。https://feedly.com/v3/auth/dev で再取得してください。
+
+**LAN内の他端末からアクセスしたい場合：**
+`npm run dev -- -H 0.0.0.0` で起動してください。
