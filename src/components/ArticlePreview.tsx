@@ -45,7 +45,7 @@ export default function ArticlePreview({ entry, onClose, fontSizeLevel = 1 }: Pr
                 href={url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-sm text-blue-600 hover:underline"
+                className="text-sm text-orange-500 hover:underline"
               >
                 Open ↗
               </a>

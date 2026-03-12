@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getStream } from "@/lib/feedly";
 import { cacheEntries, getCachedEntries } from "@/lib/db";
+import { requireAuth } from "@/lib/api-auth";
 
 export async function GET(request: NextRequest) {
+  const auth = await requireAuth();
+  if (auth instanceof NextResponse) return auth;
+
   const { searchParams } = request.nextUrl;
   const streamId = searchParams.get("streamId");
   const count = searchParams.get("count");
@@ -17,18 +21,16 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const stream = await getStream(streamId, {
+    const stream = await getStream(auth.feedlyToken, streamId, {
       count: count ? Number(count) : 20,
       unreadOnly: unreadOnly === "true",
       continuation: continuation || undefined,
     });
-    // Cache entries to SQLite on success
     if (stream.items) {
       cacheEntries(streamId, stream.items);
     }
     return NextResponse.json(stream);
   } catch (error) {
-    // Offline fallback: try SQLite cache
     const cached = getCachedEntries(streamId);
     if (cached) {
       return NextResponse.json({ id: streamId, items: cached });

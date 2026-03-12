@@ -136,7 +136,7 @@ export default function SearchModal({ onClose, onSelectEntry, streamIds, scopeLa
             <div
               key={r.entry.id}
               className={`px-4 py-3 border-b cursor-pointer ${
-                i === selectedIdx ? "bg-blue-50" : "hover:bg-gray-50"
+                i === selectedIdx ? "bg-orange-50" : "hover:bg-gray-50"
               }`}
               onClick={() => {
                 onSelectEntry(r.entry);

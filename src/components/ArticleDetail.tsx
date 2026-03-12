@@ -54,7 +54,7 @@ export default function ArticleDetail({ entry, fontSizeLevel = 1 }: Props) {
               href={url}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-blue-600 hover:underline ml-auto"
+              className="text-orange-500 hover:underline ml-auto"
             >
               Open ↗
             </a>

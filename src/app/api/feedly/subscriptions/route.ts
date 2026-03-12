@@ -1,15 +1,17 @@
 import { NextResponse } from "next/server";
 import { getSubscriptions } from "@/lib/feedly";
 import { cacheSubscriptions, getCachedSubscriptions } from "@/lib/db";
+import { requireAuth } from "@/lib/api-auth";
 
 export async function GET() {
+  const auth = await requireAuth();
+  if (auth instanceof NextResponse) return auth;
+
   try {
-    const subscriptions = await getSubscriptions();
-    // Cache to SQLite on success
+    const subscriptions = await getSubscriptions(auth.feedlyToken);
     cacheSubscriptions(subscriptions);
     return NextResponse.json(subscriptions);
   } catch (error) {
-    // Offline fallback: try SQLite cache
     const cached = getCachedSubscriptions();
     if (cached) {
       return NextResponse.json(cached);

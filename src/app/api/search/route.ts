@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { searchEntries } from "@/lib/db";
+import { requireLogin } from "@/lib/api-auth";
 
 export async function GET(request: NextRequest) {
+  const auth = await requireLogin();
+  if (auth instanceof NextResponse) return auth;
   const { searchParams } = request.nextUrl;
   const q = searchParams.get("q");
   const limit = searchParams.get("limit");

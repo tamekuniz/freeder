@@ -1,33 +1,55 @@
 "use client";
 
+import { useState } from "react";
+
 const shortcuts = [
-  { key: "/", label: "Search" },
-  { key: "f", label: "Folder search" },
-  { key: "j", label: "Next" },
-  { key: "k", label: "Prev" },
-  { key: "h/l", label: "Feed" },
-  { key: "H/L", label: "Unread feed" },
-  { key: "g/;", label: "Folder" },
-  { key: "x", label: "Fold" },
-  { key: "b", label: "Open bg" },
-  { key: "v", label: "Site" },
-  { key: "m", label: "Unread" },
-  { key: "s", label: "Star" },
-  { key: "Ctrl+r", label: "Sync" },
-  { key: "+/-", label: "Font" },
+  { key: "j / k", label: "次 / 前の記事" },
+  { key: "h / l", label: "次 / 前のフィード" },
+  { key: "H / L", label: "未読のある次 / 前のフィード" },
+  { key: "g / ;", label: "次 / 前のフォルダ" },
+  { key: "x", label: "フォルダを開閉" },
+  { key: "/", label: "検索" },
+  { key: "f", label: "フォルダ内検索" },
+  { key: "b", label: "ブラウザで開く" },
+  { key: "v", label: "サイトプレビュー" },
+  { key: "m", label: "既読/未読切替" },
+  { key: "s", label: "スター切替" },
+  { key: "Ctrl+R", label: "Feedlyと同期" },
+  { key: "+ / -", label: "フォントサイズ" },
 ];
 
 export default function KeyboardHint() {
+  const [show, setShow] = useState(false);
+
   return (
-    <div className="flex items-center gap-3 px-4 py-2 bg-gray-100 border-t text-xs text-gray-500">
-      {shortcuts.map(({ key, label }) => (
-        <span key={key} className="flex items-center gap-1">
-          <kbd className="px-1.5 py-0.5 bg-white border border-gray-300 rounded text-[10px] font-mono shadow-sm">
-            {key}
-          </kbd>
-          <span>{label}</span>
-        </span>
-      ))}
+    <div className="relative">
+      <div
+        className="flex items-center px-4 py-1.5 bg-gray-100 border-t text-xs text-gray-400 cursor-default"
+        onMouseEnter={() => setShow(true)}
+        onMouseLeave={() => setShow(false)}
+      >
+        <span>⌨ ショートカット</span>
+      </div>
+
+      {show && (
+        <div
+          className="absolute bottom-full right-0 mb-0 bg-gray-800 text-gray-200 rounded-lg shadow-xl p-3 min-w-[240px] z-50"
+          onMouseEnter={() => setShow(true)}
+          onMouseLeave={() => setShow(false)}
+        >
+          <div className="text-xs font-semibold text-gray-400 mb-2">キーボードショートカット</div>
+          <div className="space-y-1">
+            {shortcuts.map(({ key, label }) => (
+              <div key={key} className="flex items-center justify-between text-xs gap-4">
+                <span className="text-gray-300">{label}</span>
+                <kbd className="px-1.5 py-0.5 bg-gray-700 border border-gray-600 rounded text-[10px] font-mono text-gray-300 whitespace-nowrap">
+                  {key}
+                </kbd>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

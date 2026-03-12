@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { markAsRead, keepUnread, getUnreadCounts } from "@/lib/feedly";
 import { cacheUnreadCounts, getCachedUnreadCounts } from "@/lib/db";
+import { requireAuth } from "@/lib/api-auth";
 
 export async function GET() {
+  const auth = await requireAuth();
+  if (auth instanceof NextResponse) return auth;
+
   try {
-    const counts = await getUnreadCounts();
-    // Cache unread counts to SQLite
+    const counts = await getUnreadCounts(auth.feedlyToken);
     if (counts.unreadcounts) {
       const countMap: Record<string, number> = {};
       for (const c of counts.unreadcounts) {
@@ -15,7 +18,6 @@ export async function GET() {
     }
     return NextResponse.json(counts);
   } catch (error) {
-    // Offline fallback: try SQLite cache
     const cached = getCachedUnreadCounts();
     if (cached) {
       const unreadcounts = Object.entries(cached).map(([id, count]) => ({
@@ -31,6 +33,9 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
+  const auth = await requireAuth();
+  if (auth instanceof NextResponse) return auth;
+
   try {
     const body = await request.json();
     const { action, entryIds } = body;
@@ -43,9 +48,9 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === "markAsRead") {
-      await markAsRead(entryIds);
+      await markAsRead(auth.feedlyToken, entryIds);
     } else if (action === "keepUnread") {
-      await keepUnread(entryIds);
+      await keepUnread(auth.feedlyToken, entryIds);
     } else {
       return NextResponse.json(
         { error: "action must be 'markAsRead' or 'keepUnread'" },

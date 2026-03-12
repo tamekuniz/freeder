@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { starEntry, unstarEntry } from "@/lib/feedly";
+import { requireAuth } from "@/lib/api-auth";
 
 export async function PUT(request: NextRequest) {
+  const auth = await requireAuth();
+  if (auth instanceof NextResponse) return auth;
+
   try {
     const { entryId } = await request.json();
     if (!entryId) {
@@ -10,7 +14,7 @@ export async function PUT(request: NextRequest) {
         { status: 400 }
       );
     }
-    await starEntry(entryId);
+    await starEntry(auth.feedlyToken, entryId);
     return NextResponse.json({ success: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
@@ -19,6 +23,9 @@ export async function PUT(request: NextRequest) {
 }
 
 export async function DELETE(request: NextRequest) {
+  const auth = await requireAuth();
+  if (auth instanceof NextResponse) return auth;
+
   try {
     const { entryId } = await request.json();
     if (!entryId) {
@@ -27,7 +34,7 @@ export async function DELETE(request: NextRequest) {
         { status: 400 }
       );
     }
-    await unstarEntry(entryId);
+    await unstarEntry(auth.feedlyToken, entryId);
     return NextResponse.json({ success: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";

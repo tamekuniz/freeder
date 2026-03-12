@@ -1,15 +1,10 @@
 const FEEDLY_BASE_URL = "https://cloud.feedly.com";
 
-function getAccessToken(): string {
-  const token = process.env.FEEDLY_ACCESS_TOKEN;
-  if (!token || token === "your_feedly_access_token_here") {
-    throw new Error("FEEDLY_ACCESS_TOKEN is not configured");
-  }
-  return token;
-}
-
-async function feedlyFetch(path: string, options: RequestInit = {}) {
-  const token = getAccessToken();
+async function feedlyFetch(
+  token: string,
+  path: string,
+  options: RequestInit = {}
+) {
   const res = await fetch(`${FEEDLY_BASE_URL}${path}`, {
     ...options,
     headers: {
@@ -57,11 +52,14 @@ export interface FeedlyStream {
   continuation?: string;
 }
 
-export async function getSubscriptions(): Promise<FeedlySubscription[]> {
-  return feedlyFetch("/v3/subscriptions");
+export async function getSubscriptions(
+  token: string
+): Promise<FeedlySubscription[]> {
+  return feedlyFetch(token, "/v3/subscriptions");
 }
 
 export async function getStream(
+  token: string,
   streamId: string,
   options: {
     count?: number;
@@ -75,17 +73,22 @@ export async function getStream(
   if (options.unreadOnly) params.set("unreadOnly", "true");
   if (options.continuation) params.set("continuation", options.continuation);
 
-  return feedlyFetch(`/v3/streams/contents?${params.toString()}`);
+  return feedlyFetch(token, `/v3/streams/contents?${params.toString()}`);
 }
 
-export async function getUnreadCounts(): Promise<{
+export async function getUnreadCounts(
+  token: string
+): Promise<{
   unreadcounts: { id: string; count: number; updated: number }[];
 }> {
-  return feedlyFetch("/v3/markers/counts");
+  return feedlyFetch(token, "/v3/markers/counts");
 }
 
-export async function markAsRead(entryIds: string[]): Promise<void> {
-  await feedlyFetch("/v3/markers", {
+export async function markAsRead(
+  token: string,
+  entryIds: string[]
+): Promise<void> {
+  await feedlyFetch(token, "/v3/markers", {
     method: "POST",
     body: JSON.stringify({
       action: "markAsRead",
@@ -95,8 +98,11 @@ export async function markAsRead(entryIds: string[]): Promise<void> {
   });
 }
 
-export async function keepUnread(entryIds: string[]): Promise<void> {
-  await feedlyFetch("/v3/markers", {
+export async function keepUnread(
+  token: string,
+  entryIds: string[]
+): Promise<void> {
+  await feedlyFetch(token, "/v3/markers", {
     method: "POST",
     body: JSON.stringify({
       action: "keepUnread",
@@ -106,15 +112,40 @@ export async function keepUnread(entryIds: string[]): Promise<void> {
   });
 }
 
-export async function starEntry(entryId: string): Promise<void> {
-  await feedlyFetch("/v3/tags/global.saved", {
+export async function starEntry(
+  token: string,
+  entryId: string
+): Promise<void> {
+  await feedlyFetch(token, "/v3/tags/global.saved", {
     method: "PUT",
     body: JSON.stringify({ entryId }),
   });
 }
 
-export async function unstarEntry(entryId: string): Promise<void> {
-  await feedlyFetch(`/v3/tags/global.saved/${encodeURIComponent(entryId)}`, {
-    method: "DELETE",
-  });
+export async function unstarEntry(
+  token: string,
+  entryId: string
+): Promise<void> {
+  await feedlyFetch(
+    token,
+    `/v3/tags/global.saved/${encodeURIComponent(entryId)}`,
+    {
+      method: "DELETE",
+    }
+  );
+}
+
+// Validate a token by fetching user profile
+export async function validateToken(
+  token: string
+): Promise<{ valid: boolean; error?: string }> {
+  try {
+    await feedlyFetch(token, "/v3/profile");
+    return { valid: true };
+  } catch (e) {
+    return {
+      valid: false,
+      error: e instanceof Error ? e.message : "Invalid token",
+    };
+  }
 }

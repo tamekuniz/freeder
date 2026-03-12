@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import type { FeedlyEntry, FeedlySubscription } from "@/lib/feedly";
 import FeedSidebar from "@/components/FeedSidebar";
 import ArticleList from "@/components/ArticleList";
@@ -10,6 +11,8 @@ import SearchModal from "@/components/SearchModal";
 import KeyboardHint from "@/components/KeyboardHint";
 
 export default function Home() {
+  const router = useRouter();
+  const [username, setUsername] = useState<string>("");
   const [subscriptions, setSubscriptions] = useState<FeedlySubscription[]>([]);
   const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
   const [entries, setEntries] = useState<FeedlyEntry[]>([]);
@@ -26,6 +29,7 @@ export default function Home() {
   const [showSearch, setShowSearch] = useState(false);
   const [searchScope, setSearchScope] = useState<{ streamIds: string[]; label: string } | null>(null);
   const [detailOverride, setDetailOverride] = useState<FeedlyEntry | null>(null);
+  const [syncing, setSyncing] = useState(false);
 
   // Compute feed order matching sidebar visual display (with duplicates for multi-category feeds)
   type SortedFeedItem = { sub: FeedlySubscription; category: string };
@@ -89,6 +93,19 @@ export default function Home() {
   useEffect(() => {
     async function load() {
       try {
+        // Check auth state first
+        const meRes = await fetch("/api/auth/me");
+        const me = await meRes.json();
+        if (!me.ok) {
+          router.push("/login");
+          return;
+        }
+        if (!me.hasToken) {
+          router.push("/setup");
+          return;
+        }
+        setUsername(me.username);
+
         const [subs, counts, prefs] = await Promise.all([
           fetch("/api/feedly/subscriptions").then((r) => r.json()),
           fetch("/api/feedly/markers").then((r) => r.json()),
@@ -120,7 +137,8 @@ export default function Home() {
         }
         setUnreadCounts(countMap);
 
-        // Don't auto-select a feed on startup
+        // Background crawl all feeds for search index
+        fetch("/api/feedly/crawl", { method: "POST" }).catch(() => {});
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load");
       } finally {
@@ -229,9 +247,10 @@ export default function Home() {
     []
   );
 
-  // Refresh current feed (R key)
+  // Refresh current feed (R key or sync button)
   const refreshFeed = useCallback(async () => {
     if (!selectedFeedId) return;
+    setSyncing(true);
     try {
       const [streamRes, countsRes] = await Promise.all([
         fetch(`/api/feedly/streams?streamId=${encodeURIComponent(selectedFeedId)}&count=50&unreadOnly=true`),
@@ -252,6 +271,8 @@ export default function Home() {
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to refresh");
+    } finally {
+      setSyncing(false);
     }
   }, [selectedFeedId]);
 
@@ -488,7 +509,7 @@ export default function Home() {
         <div className="text-center">
           <p className="text-red-500 mb-2">{error}</p>
           <p className="text-sm text-gray-500">
-            Check your FEEDLY_ACCESS_TOKEN in .env.local
+            設定を確認してください
           </p>
         </div>
       </div>
@@ -514,6 +535,13 @@ export default function Home() {
         onToggleStarredOnly={handleToggleStarredOnly}
         collapsedFolders={collapsedFolders}
         onToggleFolder={handleToggleFolder}
+        username={username}
+        syncing={syncing}
+        onSync={refreshFeed}
+        onLogout={async () => {
+          await fetch("/api/auth/logout", { method: "POST" });
+          router.push("/login");
+        }}
       />
       <div className="w-[25%] min-w-[200px] flex-shrink-0 flex flex-col border-r">
         <div className="px-3 py-2 border-b bg-white flex-shrink-0">

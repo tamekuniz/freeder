@@ -44,7 +44,32 @@ function initTables(db: Database.Database) {
       value TEXT NOT NULL,
       updated_at INTEGER NOT NULL DEFAULT (unixepoch())
     );
+
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    CREATE TABLE IF NOT EXISTS user_feedly_tokens (
+      user_id INTEGER PRIMARY KEY,
+      access_token TEXT NOT NULL,
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
   `);
+
+  // Migration: add user_id column to cache_meta for per-user preferences
+  const cols = db
+    .prepare("PRAGMA table_info(cache_meta)")
+    .all() as { name: string }[];
+  if (!cols.some((c) => c.name === "user_id")) {
+    db.exec("ALTER TABLE cache_meta ADD COLUMN user_id INTEGER DEFAULT NULL");
+  }
+  // Recreate without old PRIMARY KEY constraint by using a unique index
+  db.exec(
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_cache_meta_user_key ON cache_meta(COALESCE(user_id, 0), key)"
+  );
 
   // FTS5 full-text search table for entries (trigram tokenizer for CJK support)
   // Check if FTS table exists and uses correct tokenizer; recreate if needed
@@ -186,7 +211,8 @@ export function searchEntries(
   if (!trimmed) return [];
 
   // With trigram tokenizer, use quoted string for exact substring matching
-  const ftsQuery = `"${trimmed.replace(/"/g, '""')}"`;
+  // Search only title and content columns, exclude feed_title
+  const ftsQuery = `{title content}: "${trimmed.replace(/"/g, '""')}"`;
 
   if (streamIds && streamIds.length > 0) {
     const placeholders = streamIds.map(() => "?").join(",");
@@ -259,31 +285,131 @@ export function getCachedUnreadCounts(): Record<string, number> | null {
   return result;
 }
 
-// --- UI Preferences (cache_meta) ---
+// --- Users ---
 
-export function getPreference(key: string): string | null {
+export function createUser(
+  username: string,
+  passwordHash: string
+): number {
+  const db = getDb();
+  const result = db
+    .prepare(
+      "INSERT INTO users (username, password_hash) VALUES (?, ?)"
+    )
+    .run(username, passwordHash);
+  return Number(result.lastInsertRowid);
+}
+
+export function getUserByUsername(
+  username: string
+): { id: number; username: string; password_hash: string } | null {
   const db = getDb();
   const row = db
-    .prepare("SELECT value FROM cache_meta WHERE key = ?")
-    .get(key) as { value: string } | undefined;
+    .prepare("SELECT id, username, password_hash FROM users WHERE username = ?")
+    .get(username) as
+    | { id: number; username: string; password_hash: string }
+    | undefined;
+  return row ?? null;
+}
+
+export function getUserCount(): number {
+  const db = getDb();
+  const row = db.prepare("SELECT COUNT(*) as c FROM users").get() as {
+    c: number;
+  };
+  return row.c;
+}
+
+// --- Feedly Tokens ---
+
+export function setFeedlyToken(userId: number, token: string): void {
+  const db = getDb();
+  db.prepare(
+    "INSERT OR REPLACE INTO user_feedly_tokens (user_id, access_token, updated_at) VALUES (?, ?, unixepoch())"
+  ).run(userId, token);
+}
+
+export function getFeedlyToken(userId: number): string | null {
+  const db = getDb();
+  const row = db
+    .prepare(
+      "SELECT access_token FROM user_feedly_tokens WHERE user_id = ?"
+    )
+    .get(userId) as { access_token: string } | undefined;
+  return row?.access_token ?? null;
+}
+
+// --- UI Preferences (cache_meta, per-user) ---
+
+export function getPreference(
+  key: string,
+  userId?: number
+): string | null {
+  const db = getDb();
+  const row = userId
+    ? (db
+        .prepare(
+          "SELECT value FROM cache_meta WHERE key = ? AND user_id = ?"
+        )
+        .get(key, userId) as { value: string } | undefined)
+    : (db
+        .prepare(
+          "SELECT value FROM cache_meta WHERE key = ? AND user_id IS NULL"
+        )
+        .get(key) as { value: string } | undefined);
   return row?.value ?? null;
 }
 
-export function setPreference(key: string, value: string): void {
+export function setPreference(
+  key: string,
+  value: string,
+  userId?: number
+): void {
   const db = getDb();
-  db.prepare(
-    "INSERT OR REPLACE INTO cache_meta (key, value, updated_at) VALUES (?, ?, unixepoch())"
-  ).run(key, value);
+  if (userId) {
+    // Delete + insert to handle the composite uniqueness
+    db.prepare(
+      "DELETE FROM cache_meta WHERE key = ? AND user_id = ?"
+    ).run(key, userId);
+    db.prepare(
+      "INSERT INTO cache_meta (key, value, user_id, updated_at) VALUES (?, ?, ?, unixepoch())"
+    ).run(key, value, userId);
+  } else {
+    db.prepare(
+      "INSERT OR REPLACE INTO cache_meta (key, value, updated_at) VALUES (?, ?, unixepoch())"
+    ).run(key, value);
+  }
 }
 
-export function getAllPreferences(): Record<string, string> {
+export function getAllPreferences(
+  userId?: number
+): Record<string, string> {
   const db = getDb();
-  const rows = db
-    .prepare("SELECT key, value FROM cache_meta")
-    .all() as { key: string; value: string }[];
+  const rows = userId
+    ? (db
+        .prepare("SELECT key, value FROM cache_meta WHERE user_id = ?")
+        .all(userId) as { key: string; value: string }[])
+    : (db
+        .prepare(
+          "SELECT key, value FROM cache_meta WHERE user_id IS NULL"
+        )
+        .all() as { key: string; value: string }[]);
   const result: Record<string, string> = {};
   for (const r of rows) {
     result[r.key] = r.value;
   }
   return result;
+}
+
+// Migrate shared preferences to a user (for first user registration)
+export function migratePreferencesToUser(userId: number): void {
+  const db = getDb();
+  const rows = db
+    .prepare("SELECT key, value FROM cache_meta WHERE user_id IS NULL")
+    .all() as { key: string; value: string }[];
+  for (const r of rows) {
+    db.prepare(
+      "INSERT OR IGNORE INTO cache_meta (key, value, user_id, updated_at) VALUES (?, ?, ?, unixepoch())"
+    ).run(r.key, r.value, userId);
+  }
 }

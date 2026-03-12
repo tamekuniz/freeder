@@ -1,6 +1,7 @@
 "use client";
 
 import type { FeedlySubscription } from "@/lib/feedly";
+import { LogoWithText } from "@/components/Logo";
 
 interface Props {
   subscriptions: FeedlySubscription[];
@@ -13,6 +14,10 @@ interface Props {
   onToggleStarredOnly?: () => void;
   collapsedFolders: Record<string, boolean>;
   onToggleFolder: (label: string) => void;
+  username?: string;
+  syncing?: boolean;
+  onSync?: () => void;
+  onLogout?: () => void;
 }
 
 export default function FeedSidebar({
@@ -26,6 +31,10 @@ export default function FeedSidebar({
   onToggleStarredOnly,
   collapsedFolders,
   onToggleFolder,
+  username,
+  syncing = false,
+  onSync,
+  onLogout,
 }: Props) {
   // Filter subscriptions if unread-only mode
   const filteredSubs = showUnreadOnly
@@ -70,14 +79,14 @@ export default function FeedSidebar({
   }
 
   return (
-    <div className="w-[20%] min-w-[180px] bg-gray-900 text-gray-300 overflow-y-auto flex-shrink-0">
+    <div className="w-[20%] min-w-[180px] bg-orange-500 text-white flex-shrink-0 flex flex-col">
       <div className="p-4">
-        <h1 className="text-lg font-bold text-white mb-3">freeder</h1>
+        <LogoWithText size={24} variant="white" className="mb-3" />
         <div className="flex flex-col gap-0.5">
           {onToggleUnreadOnly && (
             <button
               onClick={onToggleUnreadOnly}
-              className="w-full text-left px-2 py-1 text-xs rounded transition-colors hover:bg-gray-800 text-gray-400"
+              className={`w-full text-left px-2 py-1 text-xs rounded transition-colors hover:bg-orange-600 ${showUnreadOnly ? "text-white font-semibold" : "text-orange-100"}`}
             >
               {showUnreadOnly ? "● 未読のみ" : "○ すべて表示"}
             </button>
@@ -85,8 +94,8 @@ export default function FeedSidebar({
           {onToggleStarredOnly && (
             <button
               onClick={onToggleStarredOnly}
-              className={`w-full text-left px-2 py-1 text-xs rounded transition-colors hover:bg-gray-800 ${
-                showStarredOnly ? "text-yellow-400" : "text-gray-400"
+              className={`w-full text-left px-2 py-1 text-xs rounded transition-colors hover:bg-orange-600 ${
+                showStarredOnly ? "text-yellow-200 font-semibold" : "text-orange-100"
               }`}
             >
               {showStarredOnly ? "★ スターのみ" : "☆ スターのみ"}
@@ -94,7 +103,7 @@ export default function FeedSidebar({
           )}
         </div>
       </div>
-      <nav>
+      <nav className="flex-1 overflow-y-auto sidebar-scroll">
         {Array.from(categories.entries()).map(([label, subs]) => {
           const isOpen = !collapsedFolders[label];
           const catUnread = getCategoryUnread(subs);
@@ -103,14 +112,14 @@ export default function FeedSidebar({
             <div key={label} className="mb-1">
               <button
                 onClick={() => onToggleFolder(label)}
-                className="w-full text-left px-4 py-1.5 text-xs font-semibold text-gray-500 uppercase tracking-wider flex items-center justify-between hover:bg-gray-800 transition-colors"
+                className="w-full text-left px-4 py-1.5 text-xs font-semibold text-orange-200 uppercase tracking-wider flex items-center justify-between hover:bg-orange-600 transition-colors"
               >
                 <span className="flex items-center gap-1.5">
                   <span className="text-[10px]">{isOpen ? "▼" : "▶"}</span>
                   {label}
                 </span>
                 {catUnread > 0 && (
-                  <span className="text-[10px] text-orange-500 font-normal normal-case">
+                  <span className="text-[10px] text-white font-bold normal-case">
                     {catUnread}
                   </span>
                 )}
@@ -126,12 +135,12 @@ export default function FeedSidebar({
                       className={`
                         w-full text-left pl-8 pr-4 py-1.5 text-sm flex items-center justify-between
                         transition-colors
-                        ${isSelected ? "bg-gray-700 text-white" : "hover:bg-gray-800"}
+                        ${isSelected ? "bg-orange-600 text-white font-semibold" : "hover:bg-orange-600/70 text-orange-50"}
                       `}
                     >
                       <span className="truncate">{sub.title}</span>
                       {count > 0 && (
-                        <span className="text-xs bg-gray-700 text-orange-500 px-1.5 py-0.5 rounded-full ml-2 flex-shrink-0">
+                        <span className="text-xs bg-orange-700 text-white px-1.5 py-0.5 rounded-full ml-2 flex-shrink-0">
                           {count}
                         </span>
                       )}
@@ -142,6 +151,36 @@ export default function FeedSidebar({
           );
         })}
       </nav>
+      {username && (
+        <div className="p-3 border-t border-orange-400">
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-orange-100 truncate">{username}</span>
+            <div className="flex items-center gap-2">
+              {onSync && (
+                <button
+                  onClick={onSync}
+                  disabled={syncing}
+                  className="text-xs text-orange-200 hover:text-white transition-colors disabled:opacity-50"
+                  title="Feedlyと同期 (Ctrl+R)"
+                >
+                  <span className={syncing ? "inline-block animate-spin" : ""}>
+                    {syncing ? "↻" : "↻"}
+                  </span>
+                  {syncing ? " 同期中" : " 同期"}
+                </button>
+              )}
+              {onLogout && (
+                <button
+                  onClick={onLogout}
+                  className="text-xs text-orange-200 hover:text-white transition-colors"
+                >
+                  ログアウト
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

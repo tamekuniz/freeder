@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireLogin } from "@/lib/api-auth";
 
 export async function GET(request: NextRequest) {
+  const auth = await requireLogin();
+  if (auth instanceof NextResponse) return auth;
+
   const url = request.nextUrl.searchParams.get("url");
   if (!url) {
     return NextResponse.json({ error: "url parameter required" }, { status: 400 });

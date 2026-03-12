@@ -102,7 +102,7 @@ export default function SitePreview({ entry, onClose, fontSizeLevel = 1 }: Props
               href={url}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-blue-400 hover:underline"
+              className="text-orange-400 hover:underline"
             >
               {url}
             </a>

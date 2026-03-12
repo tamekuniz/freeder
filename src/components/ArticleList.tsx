@@ -143,7 +143,7 @@ export default function ArticleList({
             onClick={() => onSelect(index)}
             className={`
               px-3 py-2 border-b border-gray-200 cursor-pointer transition-colors
-              ${isSelected ? "bg-blue-50 border-l-4 border-l-blue-500" : "hover:bg-gray-50"}
+              ${isSelected ? "bg-orange-50 border-l-4 border-l-orange-500" : "hover:bg-gray-50"}
               ${entry.unread ? "" : "opacity-75"}
             `}
           >
@@ -151,7 +151,7 @@ export default function ArticleList({
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-0.5">
                   {entry.unread && (
-                    <span className="w-2 h-2 bg-blue-500 rounded-full flex-shrink-0" />
+                    <span className="w-2 h-2 bg-orange-500 rounded-full flex-shrink-0" />
                   )}
                   <span className={`${fs.meta} text-gray-500 truncate`}>
                     {entry.origin?.title}
