@@ -82,14 +82,12 @@ export default function Home() {
 
   // Also compute sorted category order for g/; navigation
   const sortedCategories = useMemo(() => {
-    const catSet = new Set<string>();
-    for (const item of sortedFeeds) {
-      catSet.add(item.category);
-    }
-    // Already in correct order from sortedFeeds, but use Set to deduplicate
+    const seen = new Set<string>();
     const ordered: string[] = [];
     for (const item of sortedFeeds) {
-      if (!ordered.includes(item.category)) ordered.push(item.category);
+      if (seen.has(item.category)) continue;
+      seen.add(item.category);
+      ordered.push(item.category);
     }
     return ordered;
   }, [sortedFeeds]);
@@ -196,70 +194,64 @@ export default function Home() {
     if (sitePreviewEntry) setSitePreviewEntry(entry);
   }, [selectedIndex, entries]);
 
-  // Auto-extract full text when article only has summary
-  const currentEntry = detailOverride || entries[selectedIndex] || null;
-  const currentEntryId = currentEntry?.id ?? null;
+  // Compute selected entry (used for extraction and rendering)
+  const filteredEntries = useMemo(
+    () =>
+      showStarredOnly
+        ? entries.filter((e) => e.tags?.some((t) => t.id.includes("global.saved")))
+        : entries,
+    [entries, showStarredOnly]
+  );
+  const selectedEntry = detailOverride || filteredEntries[selectedIndex] || null;
+  const selectedEntryUrl = selectedEntry?.alternate?.[0]?.href ?? null;
 
+  // Shared extraction fetch logic
+  const doExtract = useCallback(
+    (url: string, onCancel?: () => boolean) => {
+      setExtracting(true);
+      setExtractError(null);
+
+      fetch(`/api/extract?url=${encodeURIComponent(url)}`)
+        .then((r) => r.json())
+        .then((data) => {
+          if (onCancel?.()) return;
+          if (data.error) {
+            setExtractError(data.error);
+          } else {
+            setExtractedContent(data.content);
+          }
+        })
+        .catch((err) => {
+          if (onCancel?.()) return;
+          setExtractError(err instanceof Error ? err.message : "Extraction failed");
+        })
+        .finally(() => {
+          if (!onCancel?.()) setExtracting(false);
+        });
+    },
+    []
+  );
+
+  // Auto-extract full text when article only has summary
   useEffect(() => {
     setExtractedContent(null);
     setExtracting(false);
     setExtractError(null);
 
-    if (!currentEntry) return;
-    // If content field exists, no need to extract
-    if (currentEntry.content?.content) return;
-
-    const url = currentEntry.alternate?.[0]?.href;
-    if (!url) return;
+    if (!selectedEntry || selectedEntry.content?.content || !selectedEntryUrl) return;
 
     let cancelled = false;
-    setExtracting(true);
-
-    fetch(`/api/extract?url=${encodeURIComponent(url)}`)
-      .then((r) => r.json())
-      .then((data) => {
-        if (cancelled) return;
-        if (data.error) {
-          setExtractError(data.error);
-        } else {
-          setExtractedContent(data.content);
-        }
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        setExtractError(err instanceof Error ? err.message : "Extraction failed");
-      })
-      .finally(() => {
-        if (!cancelled) setExtracting(false);
-      });
+    doExtract(selectedEntryUrl, () => cancelled);
 
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentEntryId]);
+  }, [selectedEntry?.id, doExtract]);
 
   // Manual extraction trigger
   const handleExtractFullText = useCallback(() => {
-    if (!currentEntry) return;
-    const url = currentEntry.alternate?.[0]?.href;
-    if (!url) return;
-
-    setExtracting(true);
-    setExtractError(null);
-
-    fetch(`/api/extract?url=${encodeURIComponent(url)}`)
-      .then((r) => r.json())
-      .then((data) => {
-        if (data.error) {
-          setExtractError(data.error);
-        } else {
-          setExtractedContent(data.content);
-        }
-      })
-      .catch((err) => {
-        setExtractError(err instanceof Error ? err.message : "Extraction failed");
-      })
-      .finally(() => setExtracting(false));
-  }, [currentEntry]);
+    if (!selectedEntryUrl) return;
+    doExtract(selectedEntryUrl);
+  }, [selectedEntryUrl, doExtract]);
 
   const handleToggleUnread = useCallback(
     (entry: FeedlyEntry) => {
@@ -585,12 +577,6 @@ export default function Home() {
       </div>
     );
   }
-
-  const filteredEntries = showStarredOnly
-    ? entries.filter((e) => e.tags?.some((t) => t.id.includes("global.saved")))
-    : entries;
-
-  const selectedEntry = detailOverride || filteredEntries[selectedIndex] || null;
 
   return (
     <div className="flex h-screen">

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireLogin } from "@/lib/api-auth";
+import { fetchAsBot } from "@/lib/fetch-utils";
 
 export async function GET(request: NextRequest) {
   const auth = await requireLogin();
@@ -14,15 +15,7 @@ export async function GET(request: NextRequest) {
     const parsed = new URL(url);
     const origin = parsed.origin;
 
-    const res = await fetch(url, {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,*/*;q=0.9",
-        "Accept-Language": "ja,en;q=0.9",
-      },
-      redirect: "follow",
-    });
+    const res = await fetchAsBot(url);
 
     const contentType = res.headers.get("content-type") || "text/html";
     const rawBytes = await res.arrayBuffer();

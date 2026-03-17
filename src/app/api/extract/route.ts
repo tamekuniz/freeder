@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireLogin } from "@/lib/api-auth";
 import { getExtractedContent, saveExtractedContent } from "@/lib/db";
+import { fetchAsBot } from "@/lib/fetch-utils";
 import { Readability } from "@mozilla/readability";
 import { parseHTML } from "linkedom";
 
@@ -23,15 +24,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const res = await fetch(url, {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        Accept: "text/html,application/xhtml+xml,*/*;q=0.9",
-        "Accept-Language": "ja,en;q=0.9",
-      },
-      redirect: "follow",
-    });
+    const res = await fetchAsBot(url);
 
     if (!res.ok) {
       return NextResponse.json(
