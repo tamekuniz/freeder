@@ -18,6 +18,7 @@ interface Props {
   syncing?: boolean;
   onSync?: () => void;
   onLogout?: () => void;
+  width?: number;
 }
 
 export default function FeedSidebar({
@@ -35,6 +36,7 @@ export default function FeedSidebar({
   syncing = false,
   onSync,
   onLogout,
+  width,
 }: Props) {
   // Filter subscriptions if unread-only mode
   const filteredSubs = showUnreadOnly
@@ -79,9 +81,23 @@ export default function FeedSidebar({
   }
 
   return (
-    <div className="w-[20%] min-w-[180px] bg-orange-500 text-white flex-shrink-0 flex flex-col">
+    <div className="bg-orange-500 text-white flex-shrink-0 flex flex-col" style={width ? { width: `${width}px`, minWidth: 140 } : { width: "20%", minWidth: 180 }}>
       <div className="p-4">
-        <LogoWithText size={24} variant="white" className="mb-3" />
+        <div className="flex items-center justify-between mb-3">
+          <LogoWithText size={24} variant="white" />
+          {onSync && (
+            <button
+              onClick={onSync}
+              disabled={syncing}
+              title="Feedlyと同期 (Ctrl+R)"
+              className={`p-1.5 rounded hover:bg-orange-600 transition-colors text-white/80 hover:text-white ${syncing ? "animate-spin" : ""}`}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
+              </svg>
+            </button>
+          )}
+        </div>
         <div className="flex flex-col gap-0.5">
           {onToggleUnreadOnly && (
             <button
@@ -119,7 +135,7 @@ export default function FeedSidebar({
                   {label}
                 </span>
                 {catUnread > 0 && (
-                  <span className="text-[10px] text-white font-bold normal-case">
+                  <span className="text-[10px] bg-white text-orange-500 font-bold normal-case px-1.5 py-0.5 rounded-full">
                     {catUnread}
                   </span>
                 )}
@@ -135,12 +151,14 @@ export default function FeedSidebar({
                       className={`
                         w-full text-left pl-8 pr-4 py-1.5 text-sm flex items-center justify-between
                         transition-colors
-                        ${isSelected ? "bg-orange-600 text-white font-semibold" : "hover:bg-orange-600/70 text-orange-50"}
+                        ${isSelected ? "bg-white text-orange-500 font-semibold" : "hover:bg-orange-600/70 text-orange-50"}
                       `}
                     >
                       <span className="truncate">{sub.title}</span>
                       {count > 0 && (
-                        <span className="text-xs bg-orange-700 text-white px-1.5 py-0.5 rounded-full ml-2 flex-shrink-0">
+                        <span className={`text-xs px-1.5 py-0.5 rounded-full ml-2 flex-shrink-0 ${
+                          isSelected ? "bg-orange-500 text-white" : "bg-white text-orange-500"
+                        }`}>
                           {count}
                         </span>
                       )}

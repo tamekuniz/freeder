@@ -1,14 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireLogin } from "@/lib/api-auth";
 import { getPreference } from "@/lib/db";
-import { streamChat, ChatMessage, DEFAULT_OLLAMA_URL } from "@/lib/ollama";
+import { streamChatForProvider } from "@/lib/ai";
+import type { AIProvider, ChatMessage } from "@/lib/ai";
+import { DEFAULT_OLLAMA_URL } from "@/lib/ai/provider-ollama";
 
 export async function POST(request: NextRequest) {
   const auth = await requireLogin();
   if (auth instanceof NextResponse) return auth;
 
   const body = await request.json();
-  const { model, messages } = body as {
+  const { provider = "ollama", model, messages } = body as {
+    provider?: AIProvider;
     model: string;
     messages: ChatMessage[];
   };
@@ -24,7 +27,7 @@ export async function POST(request: NextRequest) {
     getPreference("ollama-url", auth.userId) ?? DEFAULT_OLLAMA_URL;
 
   try {
-    const generator = streamChat(ollamaUrl, model, messages);
+    const generator = streamChatForProvider(provider, model, messages, ollamaUrl);
 
     const { readable, writable } = new TransformStream();
     const writer = writable.getWriter();
@@ -38,7 +41,7 @@ export async function POST(request: NextRequest) {
         await writer.write(encoder.encode("data: [DONE]\n\n"));
       } catch (error) {
         const message =
-          error instanceof Error ? error.message : "Ollama streaming error";
+          error instanceof Error ? error.message : "Streaming error";
         await writer.write(
           encoder.encode(`data: ${JSON.stringify({ error: message })}\n\n`)
         );
@@ -56,7 +59,7 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     const message =
-      error instanceof Error ? error.message : "Failed to connect to Ollama";
+      error instanceof Error ? error.message : "Failed to connect to AI provider";
     return NextResponse.json({ error: message }, { status: 502 });
   }
 }

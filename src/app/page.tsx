@@ -1,15 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { FeedlyEntry, FeedlySubscription } from "@/lib/feedly";
 import FeedSidebar from "@/components/FeedSidebar";
 import ArticleList from "@/components/ArticleList";
-import ArticleDetail from "@/components/ArticleDetail";
+import ArticleDetail, { type ArticleDetailHandle } from "@/components/ArticleDetail";
 import SitePreview from "@/components/SitePreview";
 import SearchModal from "@/components/SearchModal";
 import KeyboardHint from "@/components/KeyboardHint";
 import AIPanel from "@/components/AIPanel";
+import ResizeHandle from "@/components/ResizeHandle";
 
 export default function Home() {
   const router = useRouter();
@@ -32,6 +33,9 @@ export default function Home() {
   const [detailOverride, setDetailOverride] = useState<FeedlyEntry | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [showAIPanel, setShowAIPanel] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(240);
+  const [listWidth, setListWidth] = useState(512);
+  const articleDetailRef = useRef<ArticleDetailHandle>(null);
 
   // Full-text extraction state
   const [extractedContent, setExtractedContent] = useState<string | null>(null);
@@ -111,11 +115,21 @@ export default function Home() {
         }
         setUsername(me.username);
 
-        const [subs, counts, prefs] = await Promise.all([
-          fetch("/api/feedly/subscriptions").then((r) => r.json()),
-          fetch("/api/feedly/markers").then((r) => r.json()),
-          fetch("/api/preferences").then((r) => r.json()),
+        const [subsRes, countsRes, prefsRes] = await Promise.all([
+          fetch("/api/feedly/subscriptions"),
+          fetch("/api/feedly/markers"),
+          fetch("/api/preferences"),
         ]);
+        const subs = await subsRes.json();
+        const counts = await countsRes.json();
+        const prefs = await prefsRes.json();
+
+        // Detect if data came from cache (Feedly API failed)
+        const isCached = subsRes.headers.get("X-Data-Source") === "cache"
+          || countsRes.headers.get("X-Data-Source") === "cache";
+        if (isCached) {
+          setError("Feedlyとの接続に失敗しました。キャッシュデータを表示中です。設定画面でトークンを再設定してください。");
+        }
 
         if (prefs["unread-only"] === "true") {
           setShowUnreadOnly(true);
@@ -132,7 +146,7 @@ export default function Home() {
 
         if (subs.error) throw new Error(subs.error);
 
-        setSubscriptions(subs);
+        setSubscriptions(Array.isArray(subs) ? subs : []);
 
         const countMap: Record<string, number> = {};
         if (counts.unreadcounts) {
@@ -159,32 +173,51 @@ export default function Home() {
 
     async function loadEntries() {
       try {
-        const res = await fetch(
-          `/api/feedly/streams?streamId=${encodeURIComponent(selectedFeedId!)}&count=50&unreadOnly=true`
-        );
+        const params = new URLSearchParams({
+          streamId: selectedFeedId!,
+          count: "50",
+        });
+        if (showUnreadOnly) params.set("unreadOnly", "true");
+        const res = await fetch(`/api/feedly/streams?${params}`);
         const data = await res.json();
         if (data.error) throw new Error(data.error);
-        setEntries(data.items || []);
+        const items = data.items || [];
+        // Client-side filter as safety net when unread-only mode
+        setEntries(showUnreadOnly ? items.filter((e: FeedlyEntry) => e.unread) : items);
         setSelectedIndex(-1);
       } catch {
         // Server-side SQLite fallback handles this
       }
     }
     loadEntries();
-  }, [selectedFeedId]);
+  }, [selectedFeedId, showUnreadOnly]);
 
   // Mark as read when selecting an article (only on index change, not entries change)
   useEffect(() => {
     const entry = entries[selectedIndex];
     if (entry?.unread) {
-      fetch("/api/feedly/markers", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "markAsRead", entryIds: [entry.id] }),
-      });
+      // Update UI immediately
       setEntries((prev) =>
         prev.map((e, i) => (i === selectedIndex ? { ...e, unread: false } : e))
       );
+      const feedId = entry.origin?.streamId;
+      if (feedId) {
+        setUnreadCounts((prev) => ({
+          ...prev,
+          [feedId]: Math.max(0, (prev[feedId] || 0) - 1),
+        }));
+      }
+      // Send to Feedly + update local cache
+      fetch("/api/feedly/markers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "markAsRead",
+          entryIds: [entry.id],
+          feedId: entry.origin?.streamId,
+        }),
+        keepalive: true,
+      }).catch(() => {});
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedIndex]);
@@ -209,11 +242,14 @@ export default function Home() {
 
   // Shared extraction fetch logic
   const doExtract = useCallback(
-    (url: string, onCancel?: () => boolean) => {
+    (url: string, onCancel?: () => boolean, force?: boolean) => {
       setExtracting(true);
       setExtractError(null);
 
-      fetch(`/api/extract?url=${encodeURIComponent(url)}`)
+      const params = new URLSearchParams({ url });
+      if (force) params.set("force", "1");
+
+      fetch(`/api/extract?${params}`)
         .then((r) => r.json())
         .then((data) => {
           if (onCancel?.()) return;
@@ -261,13 +297,23 @@ export default function Home() {
       fetch("/api/feedly/markers", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action, entryIds: [entry.id] }),
+        body: JSON.stringify({ action, entryIds: [entry.id], feedId: entry.origin?.streamId }),
+        keepalive: true,
       });
       setEntries((prev) =>
         prev.map((e) =>
           e.id === entry.id ? { ...e, unread: !e.unread } : e
         )
       );
+      // Update sidebar unread count immediately
+      const feedId = entry.origin?.streamId;
+      if (feedId) {
+        const delta = entry.unread ? -1 : 1;
+        setUnreadCounts((prev) => ({
+          ...prev,
+          [feedId]: Math.max(0, (prev[feedId] || 0) + delta),
+        }));
+      }
     },
     []
   );
@@ -317,28 +363,45 @@ export default function Home() {
     setSyncing(true);
     try {
       const [streamRes, countsRes] = await Promise.all([
-        fetch(`/api/feedly/streams?streamId=${encodeURIComponent(selectedFeedId)}&count=50&unreadOnly=true`),
+        fetch(`/api/feedly/streams?streamId=${encodeURIComponent(selectedFeedId)}&count=50${showUnreadOnly ? "&unreadOnly=true" : ""}`),
         fetch("/api/feedly/markers"),
       ]);
+
+      // Detect cache fallback (Feedly API failed)
+      if (streamRes.headers.get("X-Data-Source") === "cache" || countsRes.headers.get("X-Data-Source") === "cache") {
+        setError("Feedlyとの接続に失敗しました。キャッシュデータを表示中です。");
+      }
+
       const data = await streamRes.json();
       if (data.error) throw new Error(data.error);
-      setEntries(data.items || []);
+      const items = data.items || [];
+      setEntries(showUnreadOnly ? items.filter((e: FeedlyEntry) => e.unread) : items);
       setSelectedIndex(-1);
 
       const counts = await countsRes.json();
       if (counts.unreadcounts) {
-        const countMap: Record<string, number> = {};
-        for (const c of counts.unreadcounts) {
-          countMap[c.id] = c.count;
-        }
-        setUnreadCounts(countMap);
+        // Merge with client state: keep the minimum count per feed
+        // (client may have optimistically decremented but server hasn't caught up)
+        setUnreadCounts((prev) => {
+          const merged: Record<string, number> = {};
+          for (const c of counts.unreadcounts) {
+            const clientCount = prev[c.id];
+            merged[c.id] = clientCount != null
+              ? Math.min(clientCount, c.count) : c.count;
+          }
+          // Preserve client-side entries not in server response
+          for (const id of Object.keys(prev)) {
+            if (!(id in merged)) merged[id] = prev[id];
+          }
+          return merged;
+        });
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to refresh");
     } finally {
       setSyncing(false);
     }
-  }, [selectedFeedId]);
+  }, [selectedFeedId, showUnreadOnly]);
 
   // Keyboard navigation for feeds, folders, and refresh
   useEffect(() => {
@@ -353,6 +416,47 @@ export default function Home() {
         if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT") return;
         e.preventDefault();
         setShowAIPanel(prev => !prev);
+        return;
+      }
+
+      // A (Shift+A): mark all articles in current feed as read
+      if (e.key === "A") {
+        e.preventDefault();
+        const unreadEntries = entries.filter((en) => en.unread);
+        if (unreadEntries.length === 0) return;
+        const feedTitle = subscriptions.find((s) => s.id === selectedFeedId)?.title || "このフィード";
+        if (!window.confirm(`「${feedTitle}」の未読 ${unreadEntries.length} 件をすべて既読にしますか？`)) return;
+        const entryIds = unreadEntries.map((en) => en.id);
+        fetch("/api/feedly/markers", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "markAsRead", entryIds }),
+        });
+        setEntries((prev) => prev.map((en) => ({ ...en, unread: false })));
+        // Update sidebar unread count
+        if (selectedFeedId) {
+          setUnreadCounts((prev) => ({
+            ...prev,
+            [selectedFeedId]: 0,
+          }));
+        }
+        return;
+      }
+
+      // e: extract full text, E: force re-extract (skip cache)
+      if (e.key === "e" || e.key === "E") {
+        e.preventDefault();
+        if (selectedEntryUrl) {
+          const force = e.key === "E";
+          doExtract(selectedEntryUrl, undefined, force);
+        }
+        return;
+      }
+
+      // u: toggle unread-only filter
+      if (e.key === "u") {
+        e.preventDefault();
+        handleToggleUnreadOnly();
         return;
       }
 
@@ -428,7 +532,7 @@ export default function Home() {
       }
 
       // h: next feed
-      if (e.key === "h" && !e.shiftKey) {
+      if (e.key === "h") {
         e.preventDefault();
         const next = Math.min(feedIndex + 1, sortedFeeds.length - 1);
         setFeedIndex(next);
@@ -436,21 +540,8 @@ export default function Home() {
         return;
       }
 
-      // H: next feed with unread
-      if (e.key === "H") {
-        e.preventDefault();
-        for (let i = feedIndex + 1; i < sortedFeeds.length; i++) {
-          if ((unreadCounts[sortedFeeds[i].sub.id] || 0) > 0) {
-            setFeedIndex(i);
-            setSelectedFeedId(sortedFeeds[i].sub.id);
-            return;
-          }
-        }
-        return;
-      }
-
       // l: prev feed
-      if (e.key === "l" && !e.shiftKey) {
+      if (e.key === "l") {
         e.preventDefault();
         const prev = Math.max(feedIndex - 1, 0);
         setFeedIndex(prev);
@@ -458,18 +549,7 @@ export default function Home() {
         return;
       }
 
-      // L: prev feed with unread
-      if (e.key === "L") {
-        e.preventDefault();
-        for (let i = feedIndex - 1; i >= 0; i--) {
-          if ((unreadCounts[sortedFeeds[i].sub.id] || 0) > 0) {
-            setFeedIndex(i);
-            setSelectedFeedId(sortedFeeds[i].sub.id);
-            return;
-          }
-        }
-        return;
-      }
+
 
       // g / ;: next/prev folder
       if (e.key === "g" || e.key === ";") {
@@ -526,6 +606,8 @@ export default function Home() {
   const handleSelectIndex = useCallback((index: number) => {
     setSelectedIndex(index);
     setDetailOverride(null); // Clear search result override on normal navigation
+    // Focus the detail pane so Space scrolls the article, not the sidebar
+    requestAnimationFrame(() => articleDetailRef.current?.focus());
   }, []);
 
   const handleSelectFeed = useCallback(
@@ -578,20 +660,53 @@ export default function Home() {
   }
 
   if (error) {
+    const isTokenError = /token|feedly token not configured/i.test(error);
     return (
       <div className="flex items-center justify-center h-screen">
-        <div className="text-center">
-          <p className="text-red-500 mb-2">{error}</p>
-          <p className="text-sm text-gray-500">
-            設定を確認してください
-          </p>
-        </div>
+        {isTokenError ? (
+          <div className="text-center max-w-md">
+            <p className="text-orange-500 text-xl font-semibold mb-3">
+              Feedlyトークンが期限切れまたは未設定です
+            </p>
+            <div className="text-left bg-gray-800 rounded-lg p-4 mb-4">
+              <p className="text-gray-300 text-sm mb-2 font-medium">Developer Tokenの取得手順:</p>
+              <ol className="text-gray-400 text-sm space-y-1 list-decimal list-inside">
+                <li>下のリンクからFeedly Developer Tokenページを開く</li>
+                <li>Feedlyにログインしてトークンを発行する</li>
+                <li>取得したトークンをセットアップページで貼り付ける</li>
+              </ol>
+            </div>
+            <div className="flex flex-col gap-3">
+              <button
+                onClick={() => router.push("/setup")}
+                className="w-full bg-orange-500 hover:bg-orange-600 text-white py-3 rounded-lg font-medium transition-colors"
+              >
+                トークンを設定する
+              </button>
+              <a
+                href="https://feedly.com/v3/auth/dev"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-sm text-orange-400 hover:text-orange-300 underline"
+              >
+                Developer Tokenを取得
+              </a>
+            </div>
+          </div>
+        ) : (
+          <div className="text-center">
+            <p className="text-red-500 mb-2">{error}</p>
+            <p className="text-sm text-gray-500">
+              設定を確認してください
+            </p>
+          </div>
+        )}
       </div>
     );
   }
 
   return (
-    <div className="flex h-screen">
+    <div className="flex h-screen overflow-hidden">
       <FeedSidebar
         subscriptions={subscriptions}
         selectedFeedId={selectedFeedId}
@@ -610,14 +725,16 @@ export default function Home() {
           await fetch("/api/auth/logout", { method: "POST" });
           router.push("/login");
         }}
+        width={sidebarWidth}
       />
-      <div className="w-[25%] min-w-[200px] flex-shrink-0 flex flex-col border-r">
-        <div className="px-3 py-2 border-b bg-white flex-shrink-0">
-          <h2 className="font-semibold text-gray-800 text-sm truncate">
+      <ResizeHandle onResize={(d) => setSidebarWidth((w) => Math.max(140, Math.min(500, w + d)))} />
+      <div className="flex-shrink-0 flex flex-col border-r overflow-hidden" style={{ width: `${listWidth}px`, minWidth: 160 }}>
+        <div className="px-3 py-2 border-b border-orange-600 bg-orange-500 flex-shrink-0">
+          <h2 className="font-semibold text-white text-sm truncate">
             {subscriptions.find((s) => s.id === selectedFeedId)?.title ||
               "All Articles"}
           </h2>
-          <p className="text-xs text-gray-500">
+          <p className="text-xs text-orange-100">
             {filteredEntries.length} articles{showStarredOnly ? " ★" : ""}
           </p>
         </div>
@@ -631,9 +748,11 @@ export default function Home() {
           disableKeyboard={showSearch}
         />
       </div>
-      <div className="flex-1 flex flex-col min-w-0">
-        <div className={showAIPanel ? "flex-1 min-h-0 flex flex-col overflow-hidden" : "flex-1 flex flex-col min-w-0"}>
+      <ResizeHandle onResize={(d) => setListWidth((w) => Math.max(160, Math.min(600, w + d)))} />
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        <div className={showAIPanel ? "flex-1 min-h-0 flex flex-col overflow-hidden" : "flex-1 flex flex-col min-w-0 overflow-hidden"}>
           <ArticleDetail
+            ref={articleDetailRef}
             entry={selectedEntry}
             fontSizeLevel={fontSizeLevel}
             extractedContent={extractedContent}

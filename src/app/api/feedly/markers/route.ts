@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { markAsRead, keepUnread, getUnreadCounts, FeedlyTokenNotFoundError } from "@/lib/feedly";
-import { cacheUnreadCounts, getCachedUnreadCounts } from "@/lib/db";
+import { cacheUnreadCounts, getCachedUnreadCounts, decrementUnreadCount, incrementUnreadCount } from "@/lib/db";
 import { requireAuthUserId } from "@/lib/api-auth";
 
 export async function GET() {
@@ -10,8 +10,16 @@ export async function GET() {
   try {
     const counts = await getUnreadCounts(auth.userId);
     if (counts.unreadcounts) {
+      // Compare with local cache: keep the lower count per feed
+      // (local decrements from markAsRead may not be reflected in Feedly yet)
+      const localCounts = getCachedUnreadCounts() || {};
       const countMap: Record<string, number> = {};
       for (const c of counts.unreadcounts) {
+        const localCount = localCounts[c.id];
+        // If we have a local count that's lower, Feedly hasn't caught up yet — keep ours
+        if (localCount != null && localCount < c.count) {
+          c.count = localCount;
+        }
         countMap[c.id] = c.count;
       }
       cacheUnreadCounts(countMap);
@@ -28,7 +36,9 @@ export async function GET() {
         count,
         updated: Date.now(),
       }));
-      return NextResponse.json({ unreadcounts });
+      return NextResponse.json({ unreadcounts }, {
+        headers: { "X-Data-Source": "cache" },
+      });
     }
     const message = error instanceof Error ? error.message : "Unknown error";
     return NextResponse.json({ error: message }, { status: 500 });
@@ -41,7 +51,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const { action, entryIds } = body;
+    const { action, entryIds, feedId } = body;
 
     if (!entryIds || !Array.isArray(entryIds)) {
       return NextResponse.json(
@@ -52,8 +62,15 @@ export async function POST(request: NextRequest) {
 
     if (action === "markAsRead") {
       await markAsRead(auth.userId, entryIds);
+      // Update local cache so reload reflects the change immediately
+      if (feedId) {
+        decrementUnreadCount(feedId, entryIds.length);
+      }
     } else if (action === "keepUnread") {
       await keepUnread(auth.userId, entryIds);
+      if (feedId) {
+        incrementUnreadCount(feedId, entryIds.length);
+      }
     } else {
       return NextResponse.json(
         { error: "action must be 'markAsRead' or 'keepUnread'" },

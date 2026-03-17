@@ -1,9 +1,10 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { requireLogin } from "@/lib/api-auth";
 import { getPreference } from "@/lib/db";
-import { listModels, DEFAULT_OLLAMA_URL } from "@/lib/ollama";
+import { getAvailableProviders, getModelsForProvider } from "@/lib/ai";
+import { DEFAULT_OLLAMA_URL } from "@/lib/ai/provider-ollama";
 
-export async function GET(request: NextRequest) {
+export async function GET() {
   const auth = await requireLogin();
   if (auth instanceof NextResponse) return auth;
 
@@ -11,11 +12,25 @@ export async function GET(request: NextRequest) {
     getPreference("ollama-url", auth.userId) ?? DEFAULT_OLLAMA_URL;
 
   try {
-    const models = await listModels(ollamaUrl);
-    return NextResponse.json({ models });
+    const providers = await getAvailableProviders(ollamaUrl);
+
+    const allModels = await Promise.all(
+      providers.map(async (p) => {
+        try {
+          return await getModelsForProvider(p.provider, ollamaUrl);
+        } catch {
+          return [];
+        }
+      })
+    );
+
+    return NextResponse.json({
+      providers,
+      models: allModels.flat(),
+    });
   } catch (error) {
     const message =
-      error instanceof Error ? error.message : "Failed to connect to Ollama";
+      error instanceof Error ? error.message : "Failed to fetch models";
     return NextResponse.json({ error: message }, { status: 502 });
   }
 }

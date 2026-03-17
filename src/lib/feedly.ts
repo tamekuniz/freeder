@@ -23,7 +23,12 @@ async function getValidToken(userId: number): Promise<string> {
     const now = Math.floor(Date.now() / 1000);
     if (now >= tokenData.expires_at - TOKEN_REFRESH_BUFFER) {
       // Token expired or about to expire, refresh it
-      const newTokens = await refreshAccessToken(tokenData.refresh_token);
+      let newTokens;
+      try {
+        newTokens = await refreshAccessToken(tokenData.refresh_token);
+      } catch {
+        throw new Error("Feedlyトークンが期限切れです。再設定してください。");
+      }
       setFeedlyTokenWithRefresh(
         userId,
         newTokens.access_token,
@@ -193,7 +198,7 @@ export async function validateToken(
 
 const FEEDLY_CLIENT_ID = process.env.FEEDLY_CLIENT_ID || "feedlydev";
 const FEEDLY_CLIENT_SECRET = process.env.FEEDLY_CLIENT_SECRET || "feedlydev";
-const FEEDLY_REDIRECT_URI = process.env.FEEDLY_REDIRECT_URI || "http://localhost:3001/api/auth/feedly/callback";
+const FEEDLY_REDIRECT_URI = process.env.FEEDLY_REDIRECT_URI || "http://localhost:3000";
 
 export interface TokenResponse {
   access_token: string;

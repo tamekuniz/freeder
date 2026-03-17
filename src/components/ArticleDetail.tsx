@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef, forwardRef, useImperativeHandle } from "react";
 import type { FeedlyEntry } from "@/lib/feedly";
 
 const PROSE_CLASSES = [
@@ -30,14 +31,33 @@ function formatDate(timestamp: number): string {
   });
 }
 
-export default function ArticleDetail({
+export interface ArticleDetailHandle {
+  focus: () => void;
+}
+
+const ArticleDetail = forwardRef<ArticleDetailHandle, Props>(function ArticleDetail({
   entry,
   fontSizeLevel = 1,
   extractedContent,
   extracting,
   extractError,
   onExtractFullText,
-}: Props) {
+}, ref) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useImperativeHandle(ref, () => ({
+    focus: () => {
+      scrollRef.current?.focus();
+    },
+  }));
+
+  // Scroll to top when entry changes
+  useEffect(() => {
+    if (entry && scrollRef.current) {
+      scrollRef.current.scrollTop = 0;
+    }
+  }, [entry?.id]);
+
   if (!entry) {
     return (
       <div className="flex-1 flex items-center justify-center text-gray-400">
@@ -54,7 +74,7 @@ export default function ArticleDetail({
 
   return (
     <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-      <div className="px-6 py-4 border-b bg-white flex-shrink-0">
+      <div className="px-6 py-4 bg-white flex-shrink-0">
         <h2 className="text-lg font-semibold text-gray-900 leading-snug mb-1">
           {entry.title}
         </h2>
@@ -86,7 +106,9 @@ export default function ArticleDetail({
         </div>
       </div>
       <div
-        className={`flex-1 overflow-y-auto px-6 py-4 prose ${proseClass} max-w-none [&_img]:max-w-full [&_img]:h-auto`}
+        ref={scrollRef}
+        tabIndex={-1}
+        className={`flex-1 overflow-y-auto orange-scroll px-6 py-4 prose ${proseClass} max-w-none [&_img]:max-w-full [&_img]:h-auto outline-none`}
       >
         {extracting && (
           <div className="text-gray-400 text-sm mb-4 flex items-center gap-2">
@@ -108,4 +130,6 @@ export default function ArticleDetail({
       </div>
     </div>
   );
-}
+});
+
+export default ArticleDetail;

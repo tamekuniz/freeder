@@ -2,7 +2,23 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { stripHtml } from "@/lib/html-strip";
-import type { ChatMessage } from "@/lib/ollama";
+
+interface ChatMessage {
+  role: "system" | "user" | "assistant";
+  content: string;
+}
+
+interface AIModelInfo {
+  id: string;
+  name: string;
+  provider: string;
+}
+
+interface ProviderConfig {
+  provider: string;
+  label: string;
+  available: boolean;
+}
 
 interface AIPanelProps {
   articleContent: string;
@@ -38,9 +54,11 @@ export default function AIPanel({
   const [showSettings, setShowSettings] = useState(false);
 
   // Settings
-  const [ollamaUrl, setOllamaUrl] = useState("http://localhost:11434");
+  const [provider, setProvider] = useState("");
   const [model, setModel] = useState("");
-  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [availableProviders, setAvailableProviders] = useState<ProviderConfig[]>([]);
+  const [allModels, setAllModels] = useState<AIModelInfo[]>([]);
+  const [ollamaUrl, setOllamaUrl] = useState("http://localhost:11434");
   const [modelsLoading, setModelsLoading] = useState(false);
 
   // Summary
@@ -59,6 +77,9 @@ export default function AIPanel({
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   const abortRef = useRef<AbortController | null>(null);
+
+  // Derived: models for current provider
+  const providerModels = allModels.filter((m) => m.provider === provider);
 
   // Reset state when article changes
   useEffect(() => {
@@ -87,7 +108,13 @@ export default function AIPanel({
         if (!res.ok) return;
         const prefs = await res.json();
         if (prefs["ollama-url"]) setOllamaUrl(prefs["ollama-url"]);
-        if (prefs["ollama-model"]) setModel(prefs["ollama-model"]);
+        if (prefs["ai-provider"]) setProvider(prefs["ai-provider"]);
+        if (prefs["ai-model"]) setModel(prefs["ai-model"]);
+        // Legacy fallback
+        if (!prefs["ai-provider"] && prefs["ollama-model"]) {
+          setProvider("ollama");
+          setModel(prefs["ollama-model"]);
+        }
       } catch {
         // ignore
       }
@@ -101,12 +128,25 @@ export default function AIPanel({
       const res = await fetch("/api/ai/models");
       if (!res.ok) return;
       const data = await res.json();
-      const names = (data.models || []).map(
-        (m: { name: string }) => m.name
-      );
-      setAvailableModels(names);
-      if (names.length > 0) {
-        setModel(prev => prev || names[0]);
+      const providers: ProviderConfig[] = data.providers || [];
+      const models: AIModelInfo[] = data.models || [];
+      setAvailableProviders(providers);
+      setAllModels(models);
+
+      // Auto-select provider if not set
+      if (providers.length > 0) {
+        setProvider((prev) => {
+          if (prev && providers.some((p) => p.provider === prev)) return prev;
+          return providers[0].provider;
+        });
+      }
+
+      // Auto-select model if not set
+      if (models.length > 0) {
+        setModel((prev) => {
+          if (prev && models.some((m) => m.id === prev)) return prev;
+          return models[0].id;
+        });
       }
     } catch {
       // ignore
@@ -118,6 +158,15 @@ export default function AIPanel({
   useEffect(() => {
     fetchModels();
   }, [fetchModels]);
+
+  // When provider changes, auto-select first model for that provider
+  useEffect(() => {
+    if (!provider) return;
+    const models = allModels.filter((m) => m.provider === provider);
+    if (models.length > 0 && !models.some((m) => m.id === model)) {
+      setModel(models[0].id);
+    }
+  }, [provider, allModels, model]);
 
   // Save preference helper
   const savePref = async (key: string, value: string) => {
@@ -146,7 +195,7 @@ export default function AIPanel({
       const res = await fetch("/api/ai/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model, messages }),
+        body: JSON.stringify({ provider, model, messages }),
         signal: controller.signal,
       });
 
@@ -170,6 +219,17 @@ export default function AIPanel({
             if (data === "[DONE]") {
               onDone();
               return;
+            }
+            // Check for error JSON
+            try {
+              const parsed = JSON.parse(data);
+              if (parsed.error) {
+                onChunk(`[Error: ${parsed.error}]`);
+                onDone();
+                return;
+              }
+            } catch {
+              // Not JSON, treat as text chunk
             }
             onChunk(data);
           }
@@ -273,6 +333,8 @@ export default function AIPanel({
     { key: "chat", label: "チャット" },
   ];
 
+  const providerLabel = availableProviders.find((p) => p.provider === provider)?.label || provider;
+
   return (
     <div className="h-[40vh] bg-white border-t border-gray-200 flex flex-col text-sm">
       {/* Header */}
@@ -293,6 +355,9 @@ export default function AIPanel({
           ))}
         </div>
         <div className="ml-auto flex items-center gap-1">
+          {provider && (
+            <span className="text-xs text-gray-400 mr-1">{providerLabel}</span>
+          )}
           <button
             onClick={() => {
               setShowSettings((s) => !s);
@@ -345,17 +410,27 @@ export default function AIPanel({
 
       {/* Settings Panel */}
       {showSettings && (
-        <div className="px-3 py-2 border-b border-gray-200 bg-gray-50 flex items-center gap-4 flex-shrink-0">
+        <div className="px-3 py-2 border-b border-gray-200 bg-gray-50 flex items-center gap-4 flex-shrink-0 flex-wrap">
           <label className="flex items-center gap-1.5 text-gray-600">
-            <span className="whitespace-nowrap">Ollama URL:</span>
-            <input
-              type="text"
-              value={ollamaUrl}
-              onChange={(e) => setOllamaUrl(e.target.value)}
-              onBlur={() => savePref("ollama-url", ollamaUrl)}
+            <span className="whitespace-nowrap">プロバイダ:</span>
+            <select
+              value={provider}
+              onChange={(e) => {
+                setProvider(e.target.value);
+                savePref("ai-provider", e.target.value);
+              }}
               onKeyDown={stopPropagation}
-              className="border border-gray-300 rounded px-2 py-0.5 text-sm w-56 focus:outline-none focus:ring-1 focus:ring-orange-500"
-            />
+              className="border border-gray-300 rounded px-2 py-0.5 text-sm focus:outline-none focus:ring-1 focus:ring-orange-500"
+            >
+              {availableProviders.map((p) => (
+                <option key={p.provider} value={p.provider}>
+                  {p.label}
+                </option>
+              ))}
+              {availableProviders.length === 0 && (
+                <option value="">利用可能なプロバイダなし</option>
+              )}
+            </select>
           </label>
           <label className="flex items-center gap-1.5 text-gray-600">
             <span className="whitespace-nowrap">モデル:</span>
@@ -363,22 +438,35 @@ export default function AIPanel({
               value={model}
               onChange={(e) => {
                 setModel(e.target.value);
-                savePref("ollama-model", e.target.value);
+                savePref("ai-model", e.target.value);
               }}
               onKeyDown={stopPropagation}
               className="border border-gray-300 rounded px-2 py-0.5 text-sm focus:outline-none focus:ring-1 focus:ring-orange-500"
             >
               {modelsLoading && <option>読み込み中...</option>}
-              {!modelsLoading && availableModels.length === 0 && (
+              {!modelsLoading && providerModels.length === 0 && (
                 <option value="">モデルなし</option>
               )}
-              {availableModels.map((m) => (
-                <option key={m} value={m}>
-                  {m}
+              {providerModels.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name}
                 </option>
               ))}
             </select>
           </label>
+          {provider === "ollama" && (
+            <label className="flex items-center gap-1.5 text-gray-600">
+              <span className="whitespace-nowrap">URL:</span>
+              <input
+                type="text"
+                value={ollamaUrl}
+                onChange={(e) => setOllamaUrl(e.target.value)}
+                onBlur={() => savePref("ollama-url", ollamaUrl)}
+                onKeyDown={stopPropagation}
+                className="border border-gray-300 rounded px-2 py-0.5 text-sm w-48 focus:outline-none focus:ring-1 focus:ring-orange-500"
+              />
+            </label>
+          )}
           <button
             onClick={fetchModels}
             className="text-orange-500 hover:text-orange-600 text-sm"

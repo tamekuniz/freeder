@@ -304,6 +304,20 @@ export function getCachedUnreadCounts(): Record<string, number> | null {
   return result;
 }
 
+export function decrementUnreadCount(feedId: string, by: number = 1): void {
+  const db = getDb();
+  db.prepare(
+    "UPDATE unread_counts SET count = MAX(0, count - ?), updated_at = unixepoch() WHERE id = ?"
+  ).run(by, feedId);
+}
+
+export function incrementUnreadCount(feedId: string, by: number = 1): void {
+  const db = getDb();
+  db.prepare(
+    "UPDATE unread_counts SET count = count + ?, updated_at = unixepoch() WHERE id = ?"
+  ).run(by, feedId);
+}
+
 // --- Users ---
 
 export function createUser(
@@ -402,7 +416,7 @@ export function getPreference(
   userId?: number
 ): string | null {
   const db = getDb();
-  const row = userId
+  const row = userId != null
     ? (db
         .prepare(
           "SELECT value FROM cache_meta WHERE key = ? AND user_id = ?"
@@ -422,7 +436,7 @@ export function setPreference(
   userId?: number
 ): void {
   const db = getDb();
-  if (userId) {
+  if (userId != null) {
     // Delete + insert to handle the composite uniqueness
     db.prepare(
       "DELETE FROM cache_meta WHERE key = ? AND user_id = ?"
@@ -441,19 +455,32 @@ export function getAllPreferences(
   userId?: number
 ): Record<string, string> {
   const db = getDb();
-  const rows = userId
-    ? (db
-        .prepare("SELECT key, value FROM cache_meta WHERE user_id = ?")
-        .all(userId) as { key: string; value: string }[])
-    : (db
-        .prepare(
-          "SELECT key, value FROM cache_meta WHERE user_id IS NULL"
-        )
-        .all() as { key: string; value: string }[]);
   const result: Record<string, string> = {};
-  for (const r of rows) {
-    result[r.key] = r.value;
+
+  if (userId != null) {
+    // First load global (user_id IS NULL) as fallback
+    const globalRows = db
+      .prepare("SELECT key, value FROM cache_meta WHERE user_id IS NULL")
+      .all() as { key: string; value: string }[];
+    for (const r of globalRows) {
+      result[r.key] = r.value;
+    }
+    // Then overlay user-specific prefs (takes priority)
+    const userRows = db
+      .prepare("SELECT key, value FROM cache_meta WHERE user_id = ?")
+      .all(userId) as { key: string; value: string }[];
+    for (const r of userRows) {
+      result[r.key] = r.value;
+    }
+  } else {
+    const rows = db
+      .prepare("SELECT key, value FROM cache_meta WHERE user_id IS NULL")
+      .all() as { key: string; value: string }[];
+    for (const r of rows) {
+      result[r.key] = r.value;
+    }
   }
+
   return result;
 }
 

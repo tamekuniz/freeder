@@ -14,7 +14,9 @@ export async function GET() {
   } catch (error) {
     const cached = getCachedSubscriptions();
     if (cached) {
-      return NextResponse.json(cached);
+      return NextResponse.json(cached, {
+        headers: { "X-Data-Source": "cache" },
+      });
     }
     if (error instanceof FeedlyTokenNotFoundError) {
       return NextResponse.json({ error: "feedly token not configured" }, { status: 403 });

@@ -127,7 +127,7 @@ export default function ArticleList({
   }
 
   return (
-    <div ref={listRef} className="flex-1 overflow-y-auto">
+    <div ref={listRef} className="flex-1 overflow-y-auto orange-scroll">
       {entries.map((entry, index) => {
         const isSelected = index === selectedIndex;
         const isStarred = entry.tags?.some((t) =>

@@ -36,7 +36,9 @@ export async function GET(request: NextRequest) {
     }
     const cached = getCachedEntries(streamId);
     if (cached) {
-      return NextResponse.json({ id: streamId, items: cached });
+      return NextResponse.json({ id: streamId, items: cached }, {
+        headers: { "X-Data-Source": "cache" },
+      });
     }
     const message = error instanceof Error ? error.message : "Unknown error";
     return NextResponse.json({ error: message }, { status: 500 });

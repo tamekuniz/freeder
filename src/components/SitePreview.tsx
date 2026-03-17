@@ -124,7 +124,7 @@ export default function SitePreview({ entry, onClose, fontSizeLevel = 1 }: Props
           style={{
             zoom: ZOOM_LEVELS[fontSizeLevel] || 1,
           }}
-          sandbox="allow-same-origin allow-forms allow-popups"
+          sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"
         />
       </div>
     </div>

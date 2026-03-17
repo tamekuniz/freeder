@@ -13,8 +13,44 @@ function SetupContent() {
   const [hasToken, setHasToken] = useState(false);
   const [hasEnvToken, setHasEnvToken] = useState(false);
 
-  // Pick up OAuth error from URL params
+  // Pick up OAuth error/code from URL params
   const oauthError = searchParams.get("error");
+  const oauthCode = searchParams.get("code");
+  const oauthState = searchParams.get("state");
+  const [oauthLoading, setOauthLoading] = useState(false);
+
+  // Handle OAuth2 callback: Feedly redirects back to http://localhost:3000 with code & state
+  useEffect(() => {
+    if (!oauthCode || !oauthState) return;
+    setOauthLoading(true);
+    setError("");
+
+    // Clean the code/state from the URL to prevent re-processing on refresh
+    const cleanUrl = new URL(window.location.href);
+    cleanUrl.searchParams.delete("code");
+    cleanUrl.searchParams.delete("state");
+    window.history.replaceState({}, "", cleanUrl.pathname + cleanUrl.search);
+
+    fetch("/api/auth/feedly/callback", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code: oauthCode, state: oauthState }),
+    })
+      .then(async (res) => {
+        const data = await res.json();
+        if (!res.ok) {
+          setError(data.error || "Feedly認証に失敗しました");
+          return;
+        }
+        router.push("/");
+      })
+      .catch(() => {
+        setError("Feedly認証中に通信エラーが発生しました");
+      })
+      .finally(() => {
+        setOauthLoading(false);
+      });
+  }, [oauthCode, oauthState, router]);
 
   useEffect(() => {
     fetch("/api/auth/token")
@@ -86,6 +122,14 @@ function SetupContent() {
           Feedly トークンの設定
         </h2>
 
+        {oauthLoading && (
+          <div className="bg-orange-500/20 border border-orange-500/50 rounded-md p-3 mb-4">
+            <p className="text-orange-400 text-sm">
+              Feedly認証中...しばらくお待ちください
+            </p>
+          </div>
+        )}
+
         {oauthError && (
           <div className="bg-red-500/20 border border-red-500/50 rounded-md p-3 mb-4">
             <p className="text-red-400 text-sm">
@@ -101,27 +145,6 @@ function SetupContent() {
         )}
 
         {error && <p className="text-red-400 text-sm mb-4">{error}</p>}
-
-        {/* Option 0: Feedlyアカウントでログイン（OAuth2） */}
-        <div className="bg-gray-800/80 rounded-lg p-6 mb-5">
-          <h2 className="text-lg font-semibold text-white mb-1">Feedlyアカウントでログイン</h2>
-          <p className="text-gray-400 text-sm mb-4">
-            Feedlyアカウントで認証して、自動的にトークンを取得します
-          </p>
-          <a
-            href="/api/auth/feedly"
-            className="block w-full text-center bg-orange-500 hover:bg-orange-600 text-white py-3 rounded-lg font-medium transition-colors"
-          >
-            Feedlyでログイン
-          </a>
-        </div>
-
-        {/* 区切り線 */}
-        <div className="flex items-center gap-3 mb-5">
-          <div className="flex-1 border-t border-gray-600" />
-          <span className="text-xs text-gray-500">または</span>
-          <div className="flex-1 border-t border-gray-600" />
-        </div>
 
         {/* Option 1: サーバー共有トークン（Proなしユーザー向け） */}
         {hasEnvToken && (
