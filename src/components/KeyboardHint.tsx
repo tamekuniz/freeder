@@ -15,6 +15,7 @@ const shortcuts = [
   { key: "m", label: "既読/未読切替" },
   { key: "s", label: "スター切替" },
   { key: "Ctrl+R", label: "Feedlyと同期" },
+  { key: "a", label: "AI パネル" },
   { key: "+ / -", label: "フォントサイズ" },
 ];
 

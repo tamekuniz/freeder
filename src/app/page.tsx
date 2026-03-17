@@ -9,6 +9,7 @@ import ArticleDetail from "@/components/ArticleDetail";
 import SitePreview from "@/components/SitePreview";
 import SearchModal from "@/components/SearchModal";
 import KeyboardHint from "@/components/KeyboardHint";
+import AIPanel from "@/components/AIPanel";
 
 export default function Home() {
   const router = useRouter();
@@ -30,6 +31,7 @@ export default function Home() {
   const [searchScope, setSearchScope] = useState<{ streamIds: string[]; label: string } | null>(null);
   const [detailOverride, setDetailOverride] = useState<FeedlyEntry | null>(null);
   const [syncing, setSyncing] = useState(false);
+  const [showAIPanel, setShowAIPanel] = useState(false);
 
   // Full-text extraction state
   const [extractedContent, setExtractedContent] = useState<string | null>(null);
@@ -344,6 +346,16 @@ export default function Home() {
       // Suppress all shortcuts while search modal is open
       if (showSearch) return;
 
+      // a: toggle AI panel
+      if (e.key === "a") {
+        // Don't trigger if user is typing in an input
+        const target = e.target as HTMLElement;
+        if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT") return;
+        e.preventDefault();
+        setShowAIPanel(prev => !prev);
+        return;
+      }
+
       // /: open global search
       if (e.key === "/") {
         e.preventDefault();
@@ -620,14 +632,23 @@ export default function Home() {
         />
       </div>
       <div className="flex-1 flex flex-col min-w-0">
-        <ArticleDetail
-          entry={selectedEntry}
-          fontSizeLevel={fontSizeLevel}
-          extractedContent={extractedContent}
-          extracting={extracting}
-          extractError={extractError}
-          onExtractFullText={handleExtractFullText}
-        />
+        <div className={showAIPanel ? "flex-1 min-h-0 flex flex-col overflow-hidden" : "flex-1 flex flex-col min-w-0"}>
+          <ArticleDetail
+            entry={selectedEntry}
+            fontSizeLevel={fontSizeLevel}
+            extractedContent={extractedContent}
+            extracting={extracting}
+            extractError={extractError}
+            onExtractFullText={handleExtractFullText}
+          />
+        </div>
+        {showAIPanel && (
+          <AIPanel
+            articleContent={extractedContent || selectedEntry?.content?.content || selectedEntry?.summary?.content || ""}
+            articleTitle={selectedEntry?.title || ""}
+            onClose={() => setShowAIPanel(false)}
+          />
+        )}
         <KeyboardHint />
       </div>
 
