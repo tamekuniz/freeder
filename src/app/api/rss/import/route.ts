@@ -10,6 +10,8 @@ export async function POST(request: NextRequest) {
     const { userId } = auth;
 
     let opmlText: string;
+    let preview = false;
+    let selectedUrls: string[] | undefined;
 
     const contentType = request.headers.get("content-type") || "";
 
@@ -32,9 +34,16 @@ export async function POST(request: NextRequest) {
         );
       }
       opmlText = body.opml;
+      preview = body.preview === true;
+      selectedUrls = body.selectedUrls;
     }
 
     const feedItems = parseOPML(opmlText);
+
+    // Preview mode: return parsed items without importing
+    if (preview) {
+      return NextResponse.json({ items: feedItems });
+    }
 
     // Get existing feeds to check for duplicates
     const existingFeeds = getRssFeeds(userId);
@@ -45,6 +54,11 @@ export async function POST(request: NextRequest) {
     const errors: string[] = [];
 
     for (const item of feedItems) {
+      // If selectedUrls is specified, only import those
+      if (selectedUrls && !selectedUrls.includes(item.feedUrl)) {
+        continue;
+      }
+
       if (existingUrls.has(item.feedUrl)) {
         skipped++;
         continue;

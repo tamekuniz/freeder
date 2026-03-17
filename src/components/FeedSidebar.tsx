@@ -18,6 +18,7 @@ interface Props {
   syncing?: boolean;
   onSync?: () => void;
   onLogout?: () => void;
+  onSettings?: () => void;
   width?: number;
 }
 
@@ -36,6 +37,7 @@ export default function FeedSidebar({
   syncing = false,
   onSync,
   onLogout,
+  onSettings,
   width,
 }: Props) {
   // Filter subscriptions if unread-only mode
@@ -89,7 +91,7 @@ export default function FeedSidebar({
             <button
               onClick={onSync}
               disabled={syncing}
-              title="Feedlyと同期 (Ctrl+R)"
+              title="RSSフィードを更新 (Ctrl+R)"
               className={`p-1.5 rounded hover:bg-orange-600 transition-colors text-white/80 hover:text-white ${syncing ? "animate-spin" : ""}`}
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -179,12 +181,21 @@ export default function FeedSidebar({
                   onClick={onSync}
                   disabled={syncing}
                   className="text-xs text-orange-200 hover:text-white transition-colors disabled:opacity-50"
-                  title="Feedlyと同期 (Ctrl+R)"
+                  title="RSSフィードを更新 (Ctrl+R)"
                 >
                   <span className={syncing ? "inline-block animate-spin" : ""}>
                     {syncing ? "↻" : "↻"}
                   </span>
-                  {syncing ? " 同期中" : " 同期"}
+                  {syncing ? " 更新中" : " 更新"}
+                </button>
+              )}
+              {onSettings && (
+                <button
+                  onClick={onSettings}
+                  className="text-xs text-orange-200 hover:text-white transition-colors"
+                  title="設定"
+                >
+                  設定
                 </button>
               )}
               {onLogout && (

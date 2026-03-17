@@ -163,6 +163,26 @@ export default function Home() {
     load();
   }, []);
 
+  // Auto-refresh every 10 minutes
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      try {
+        await fetch("/api/rss/crawl", { method: "POST" });
+        // Reload unread counts
+        const rssRes = await fetch("/api/rss/feeds");
+        if (rssRes.ok) {
+          const rssFeeds = await rssRes.json();
+          const countMap: Record<string, number> = {};
+          for (const f of rssFeeds) {
+            if (f.unread_count != null) countMap[f.id] = f.unread_count;
+          }
+          setUnreadCounts(countMap);
+        }
+      } catch { /* ignore */ }
+    }, 10 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, []);
+
   // Load entries when feed changes (SQLite fallback handled server-side)
   useEffect(() => {
     if (!selectedFeedId) return;
@@ -668,6 +688,7 @@ export default function Home() {
         username={username}
         syncing={syncing}
         onSync={refreshFeed}
+        onSettings={() => router.push("/setup")}
         onLogout={async () => {
           await fetch("/api/auth/logout", { method: "POST" });
           router.push("/login");
