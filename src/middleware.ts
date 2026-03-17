@@ -7,15 +7,6 @@ const publicPaths = ["/login", "/setup", "/api/auth"];
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // Feedly OAuth2 callback: redirect_uri is http://localhost:3000
-  // so Feedly redirects to "/" with code & state params.
-  // Forward these to /setup where the frontend handles the token exchange.
-  if (pathname === "/" && request.nextUrl.searchParams.has("code") && request.nextUrl.searchParams.has("state")) {
-    const setupUrl = new URL("/setup", request.url);
-    setupUrl.search = request.nextUrl.search;
-    return NextResponse.redirect(setupUrl);
-  }
-
   // Allow public paths and static assets
   if (
     publicPaths.some((p) => pathname.startsWith(p)) ||

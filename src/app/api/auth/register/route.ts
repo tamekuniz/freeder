@@ -7,7 +7,6 @@ import {
   createUser,
   getUserByUsername,
   getUserCount,
-  setFeedlyToken,
   migratePreferencesToUser,
 } from "@/lib/db";
 
@@ -39,12 +38,8 @@ export async function POST(request: Request) {
     const isFirst = getUserCount() === 0;
     const userId = createUser(username.trim(), hashPassword(password));
 
-    // First user: migrate legacy .env token and shared preferences
+    // First user: migrate shared preferences
     if (isFirst) {
-      const envToken = process.env.FEEDLY_ACCESS_TOKEN;
-      if (envToken && envToken !== "your_feedly_access_token_here") {
-        setFeedlyToken(userId, envToken);
-      }
       migratePreferencesToUser(userId);
     }
 

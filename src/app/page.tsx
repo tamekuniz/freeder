@@ -129,74 +129,31 @@ export default function Home() {
           } catch { /* ignore parse errors */ }
         }
 
-        // Fetch Feedly subscriptions (may fail if no token)
-        let feedlySubs: FeedlySubscription[] = [];
-        let countMap: Record<string, number> = {};
-        let feedlyWarning: string | null = null;
-        if (me.hasToken) {
-          try {
-            const [subsRes, countsRes] = await Promise.all([
-              fetch("/api/feedly/subscriptions"),
-              fetch("/api/feedly/markers"),
-            ]);
-            const subs = await subsRes.json();
-            const counts = await countsRes.json();
-
-            // Detect if data came from cache (Feedly API failed)
-            const isCached = subsRes.headers.get("X-Data-Source") === "cache"
-              || countsRes.headers.get("X-Data-Source") === "cache";
-            if (isCached) {
-              feedlyWarning = "Feedlyとの接続に失敗しました。キャッシュデータを表示中です。設定画面でトークンを再設定してください。";
-            }
-
-            if (!subs.error) {
-              feedlySubs = Array.isArray(subs) ? subs : [];
-            }
-
-            if (counts.unreadcounts) {
-              for (const c of counts.unreadcounts) {
-                countMap[c.id] = c.count;
-              }
-            }
-          } catch {
-            feedlyWarning = "Feedlyとの接続に失敗しました。RSSフィードのみ表示しています。";
-          }
-        }
-
         // Fetch RSS feeds
-        let rssSubs: FeedlySubscription[] = [];
+        const countMap: Record<string, number> = {};
         try {
           const rssRes = await fetch("/api/rss/feeds");
           if (rssRes.ok) {
             const rssFeeds = await rssRes.json();
-            rssSubs = rssFeeds.map((f: { id: string; title?: string; feed_url: string; site_url?: string; category?: string; unread_count?: number }) => ({
+            const rssSubs: FeedlySubscription[] = rssFeeds.map((f: { id: string; title?: string; feed_url: string; site_url?: string; category?: string; unread_count?: number }) => ({
               id: f.id,
               title: f.title || f.feed_url,
               website: f.site_url || "",
               categories: [{ id: `rss-cat:${f.category || "RSS"}`, label: f.category || "RSS" }],
             }));
-            // Merge RSS unread counts
             for (const f of rssFeeds) {
               if (f.unread_count != null) {
                 countMap[f.id] = f.unread_count;
               }
             }
+            setSubscriptions(rssSubs);
           }
-        } catch { /* RSS fetch failed, continue with Feedly only */ }
+        } catch { /* RSS fetch failed */ }
 
-        // Merge subscriptions
-        setSubscriptions([...feedlySubs, ...rssSubs]);
         setUnreadCounts(countMap);
 
-        if (feedlyWarning) {
-          setWarning(feedlyWarning);
-        }
-
         // Background crawl all feeds for search index
-        Promise.all([
-          me.hasToken ? fetch("/api/feedly/crawl", { method: "POST" }).catch(() => {}) : Promise.resolve(),
-          fetch("/api/rss/crawl", { method: "POST" }).catch(() => {}),
-        ]);
+        fetch("/api/rss/crawl", { method: "POST" }).catch(() => {});
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load");
       } finally {
@@ -212,17 +169,7 @@ export default function Home() {
 
     async function loadEntries() {
       try {
-        const isRss = selectedFeedId!.startsWith("rss:");
-        const url = isRss
-          ? `/api/rss/streams?streamId=${encodeURIComponent(selectedFeedId!)}`
-          : (() => {
-              const params = new URLSearchParams({
-                streamId: selectedFeedId!,
-                count: "50",
-              });
-              if (showUnreadOnly) params.set("unreadOnly", "true");
-              return `/api/feedly/streams?${params}`;
-            })();
+        const url = `/api/rss/streams?streamId=${encodeURIComponent(selectedFeedId!)}`;
         const res = await fetch(url);
         const data = await res.json();
         if (data.error) throw new Error(data.error);
@@ -252,19 +199,17 @@ export default function Home() {
           [feedId]: Math.max(0, (prev[feedId] || 0) - 1),
         }));
       }
-      // Send to Feedly + update local cache (skip for RSS entries)
-      if (!entry.id.startsWith("rss:entry:")) {
-        fetch("/api/feedly/markers", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            action: "markAsRead",
-            entryIds: [entry.id],
-            feedId: entry.origin?.streamId,
-          }),
-          keepalive: true,
-        }).catch(() => {});
-      }
+      // Mark as read in local DB
+      fetch("/api/rss/markers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "markAsRead",
+          entryIds: [entry.id],
+          feedId: entry.origin?.streamId,
+        }),
+        keepalive: true,
+      }).catch(() => {});
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedIndex]);
@@ -341,14 +286,12 @@ export default function Home() {
   const handleToggleUnread = useCallback(
     (entry: FeedlyEntry) => {
       const action = entry.unread ? "markAsRead" : "keepUnread";
-      if (!entry.id.startsWith("rss:entry:")) {
-        fetch("/api/feedly/markers", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action, entryIds: [entry.id], feedId: entry.origin?.streamId }),
-          keepalive: true,
-        });
-      }
+      fetch("/api/rss/markers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, entryIds: [entry.id], feedId: entry.origin?.streamId }),
+        keepalive: true,
+      }).catch(() => {});
       setEntries((prev) =>
         prev.map((e) =>
           e.id === entry.id ? { ...e, unread: !e.unread } : e
@@ -370,21 +313,14 @@ export default function Home() {
   const handleToggleStar = useCallback(
     (entry: FeedlyEntry) => {
       const isStarred = entry.tags?.some((t) => t.id.includes("global.saved"));
-      if (!entry.id.startsWith("rss:entry:")) {
-        if (isStarred) {
-          fetch("/api/feedly/tags", {
-            method: "DELETE",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ entryId: entry.id }),
-          });
-        } else {
-          fetch("/api/feedly/tags", {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ entryId: entry.id }),
-          });
-        }
-      }
+      fetch("/api/rss/markers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: isStarred ? "unstar" : "star",
+          entryIds: [entry.id],
+        }),
+      }).catch(() => {});
       setEntries((prev) =>
         prev.map((e) => {
           if (e.id !== entry.id) return e;
@@ -413,54 +349,14 @@ export default function Home() {
     if (!selectedFeedId) return;
     setSyncing(true);
     try {
-      const isRss = selectedFeedId.startsWith("rss:");
-
-      if (isRss) {
-        // RSS: crawl then reload stream
-        await fetch("/api/rss/crawl", { method: "POST" }).catch(() => {});
-        const streamRes = await fetch(`/api/rss/streams?streamId=${encodeURIComponent(selectedFeedId)}`);
-        const data = await streamRes.json();
-        if (data.error) throw new Error(data.error);
-        const items = data.items || [];
-        setEntries(showUnreadOnly ? items.filter((e: FeedlyEntry) => e.unread) : items);
-        setSelectedIndex(-1);
-      } else {
-        // Feedly: existing refresh logic
-        const [streamRes, countsRes] = await Promise.all([
-          fetch(`/api/feedly/streams?streamId=${encodeURIComponent(selectedFeedId)}&count=50${showUnreadOnly ? "&unreadOnly=true" : ""}`),
-          fetch("/api/feedly/markers"),
-        ]);
-
-        // Detect cache fallback (Feedly API failed)
-        if (streamRes.headers.get("X-Data-Source") === "cache" || countsRes.headers.get("X-Data-Source") === "cache") {
-          setWarning("Feedlyとの接続に失敗しました。キャッシュデータを表示中です。");
-        }
-
-        const data = await streamRes.json();
-        if (data.error) throw new Error(data.error);
-        const items = data.items || [];
-        setEntries(showUnreadOnly ? items.filter((e: FeedlyEntry) => e.unread) : items);
-        setSelectedIndex(-1);
-
-        const counts = await countsRes.json();
-        if (counts.unreadcounts) {
-          // Merge with client state: keep the minimum count per feed
-          // (client may have optimistically decremented but server hasn't caught up)
-          setUnreadCounts((prev) => {
-            const merged: Record<string, number> = {};
-            for (const c of counts.unreadcounts) {
-              const clientCount = prev[c.id];
-              merged[c.id] = clientCount != null
-                ? Math.min(clientCount, c.count) : c.count;
-            }
-            // Preserve client-side entries not in server response
-            for (const id of Object.keys(prev)) {
-              if (!(id in merged)) merged[id] = prev[id];
-            }
-            return merged;
-          });
-        }
-      }
+      // Crawl then reload stream
+      await fetch("/api/rss/crawl", { method: "POST" }).catch(() => {});
+      const streamRes = await fetch(`/api/rss/streams?streamId=${encodeURIComponent(selectedFeedId)}`);
+      const data = await streamRes.json();
+      if (data.error) throw new Error(data.error);
+      const items = data.items || [];
+      setEntries(showUnreadOnly ? items.filter((e: FeedlyEntry) => e.unread) : items);
+      setSelectedIndex(-1);
     } catch (err) {
       setWarning(err instanceof Error ? err.message : "リフレッシュに失敗しました");
     } finally {
@@ -492,15 +388,11 @@ export default function Home() {
         const feedTitle = subscriptions.find((s) => s.id === selectedFeedId)?.title || "このフィード";
         if (!window.confirm(`「${feedTitle}」の未読 ${unreadEntries.length} 件をすべて既読にしますか？`)) return;
         const entryIds = unreadEntries.map((en) => en.id);
-        // Only send Feedly API call for non-RSS entries
-        const feedlyEntryIds = entryIds.filter((id) => !id.startsWith("rss:entry:"));
-        if (feedlyEntryIds.length > 0) {
-          fetch("/api/feedly/markers", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ action: "markAsRead", entryIds: feedlyEntryIds }),
-          });
-        }
+        fetch("/api/rss/markers", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "markAsRead", entryIds }),
+        }).catch(() => {});
         setEntries((prev) => prev.map((en) => ({ ...en, unread: false })));
         // Update sidebar unread count
         if (selectedFeedId) {
@@ -729,47 +621,14 @@ export default function Home() {
   }
 
   if (error) {
-    const isTokenError = /token|feedly token not configured/i.test(error);
     return (
       <div className="flex items-center justify-center h-screen">
-        {isTokenError ? (
-          <div className="text-center max-w-md">
-            <p className="text-orange-500 text-xl font-semibold mb-3">
-              Feedlyトークンが期限切れまたは未設定です
-            </p>
-            <div className="text-left bg-gray-800 rounded-lg p-4 mb-4">
-              <p className="text-gray-300 text-sm mb-2 font-medium">Developer Tokenの取得手順:</p>
-              <ol className="text-gray-400 text-sm space-y-1 list-decimal list-inside">
-                <li>下のリンクからFeedly Developer Tokenページを開く</li>
-                <li>Feedlyにログインしてトークンを発行する</li>
-                <li>取得したトークンをセットアップページで貼り付ける</li>
-              </ol>
-            </div>
-            <div className="flex flex-col gap-3">
-              <button
-                onClick={() => router.push("/setup")}
-                className="w-full bg-orange-500 hover:bg-orange-600 text-white py-3 rounded-lg font-medium transition-colors"
-              >
-                トークンを設定する
-              </button>
-              <a
-                href="https://feedly.com/v3/auth/dev"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-sm text-orange-400 hover:text-orange-300 underline"
-              >
-                Developer Tokenを取得
-              </a>
-            </div>
-          </div>
-        ) : (
-          <div className="text-center">
-            <p className="text-red-500 mb-2">{error}</p>
-            <p className="text-sm text-gray-500">
-              設定を確認してください
-            </p>
-          </div>
-        )}
+        <div className="text-center">
+          <p className="text-red-500 mb-2">{error}</p>
+          <p className="text-sm text-gray-500">
+            設定を確認してください
+          </p>
+        </div>
       </div>
     );
   }
@@ -781,9 +640,6 @@ export default function Home() {
           <div className="flex items-center gap-2">
             <span className="flex-shrink-0">&#9888;</span>
             <span>{warning}</span>
-            <a href="/setup" className="underline text-orange-300 hover:text-orange-100 ml-2 flex-shrink-0">
-              トークンを再設定
-            </a>
           </div>
           <button
             onClick={() => setWarning(null)}
