@@ -27,6 +27,9 @@ interface Props {
   width?: number;
   filterQuery?: string;
   onReorderFeeds?: (updates: Array<{ feedId: string; sortOrder: number; category?: string }>) => void;
+  userTags?: {id: number; name: string; color: string}[];
+  selectedTagId?: number | null;
+  onSelectTag?: (tagId: number | null) => void;
 }
 
 export default function FeedSidebar({
@@ -51,6 +54,9 @@ export default function FeedSidebar({
   width,
   filterQuery,
   onReorderFeeds,
+  userTags = [],
+  selectedTagId,
+  onSelectTag,
 }: Props) {
   const router = useRouter();
   const [multiSelected, setMultiSelected] = useState<Set<string>>(new Set());
@@ -270,6 +276,24 @@ export default function FeedSidebar({
         </div>
       </div>
       <nav className="flex-1 overflow-y-auto feed-scroll">
+        {/* タグフィルター */}
+        {userTags.length > 0 && (
+          <div className="mb-2">
+            <div className="px-3 py-1 text-xs font-semibold text-white/70 uppercase tracking-wider">Tags</div>
+            {userTags.map(tag => (
+              <button
+                key={tag.id}
+                onClick={() => onSelectTag?.(selectedTagId === tag.id ? null : tag.id)}
+                className={`w-full text-left px-3 py-1.5 text-sm flex items-center gap-2 transition-colors ${
+                  selectedTagId === tag.id ? "bg-white text-orange-500 font-medium" : "text-white hover:bg-white/10"
+                }`}
+              >
+                <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: tag.color }} />
+                <span className="truncate">{tag.name}</span>
+              </button>
+            ))}
+          </div>
+        )}
         {Array.from(categories.entries()).map(([label, subs]) => {
           const isOpen = !collapsedFolders[label];
           const catUnread = getCategoryUnread(subs);

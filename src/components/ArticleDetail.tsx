@@ -1,7 +1,10 @@
 "use client";
 
-import { useEffect, useRef, forwardRef, useImperativeHandle } from "react";
+import { useState, useEffect, useRef, forwardRef, useImperativeHandle } from "react";
 import type { FeedlyEntry } from "@/lib/feedly";
+import TagBadge from "./TagBadge";
+import TagSelector from "./TagSelector";
+import LookalikeSection from "./LookalikeSection";
 
 const PROSE_CLASSES = [
   "prose-xs",
@@ -20,6 +23,7 @@ interface Props {
   translatedContent?: string | null;
   translating?: boolean;
   searchQuery?: string;
+  onSelectLookalike?: (entry: any) => void;
 }
 
 function formatDate(timestamp: number): string {
@@ -46,8 +50,11 @@ const ArticleDetail = forwardRef<ArticleDetailHandle, Props>(function ArticleDet
   translatedContent,
   translating,
   searchQuery,
+  onSelectLookalike,
 }, ref) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [userTags, setUserTags] = useState<{id: number; name: string; color: string}[]>([]);
+  const [showTagSelector, setShowTagSelector] = useState(false);
 
   useImperativeHandle(ref, () => ({
     focus: () => {
@@ -118,6 +125,23 @@ const ArticleDetail = forwardRef<ArticleDetailHandle, Props>(function ArticleDet
     }
   }, [searchQuery, extractedContent, entry?.id]);
 
+  // Fetch user tags for current entry
+  useEffect(() => {
+    if (!entry?.id) { setUserTags([]); return; }
+    fetch(`/api/rss/tags/entries?entryId=${encodeURIComponent(entry.id)}`)
+      .then(r => r.json())
+      .then(tags => { if (Array.isArray(tags)) setUserTags(tags); })
+      .catch(() => setUserTags([]));
+  }, [entry?.id]);
+
+  const refreshTags = () => {
+    if (!entry?.id) return;
+    fetch(`/api/rss/tags/entries?entryId=${encodeURIComponent(entry.id)}`)
+      .then(r => r.json())
+      .then(tags => { if (Array.isArray(tags)) setUserTags(tags); })
+      .catch(() => {});
+  };
+
   if (!entry) {
     return (
       <div className="flex-1 flex items-center justify-center text-gray-400">
@@ -140,6 +164,34 @@ const ArticleDetail = forwardRef<ArticleDetailHandle, Props>(function ArticleDet
           <span>{formatDate(entry.published)}</span>
         </div>
       </div>
+      {/* タグエリア */}
+      <div className="flex flex-wrap items-center gap-1 px-6 py-1">
+        {userTags.map(tag => (
+          <TagBadge key={tag.id} name={tag.name} color={tag.color} onRemove={() => {
+            fetch("/api/rss/tags/entries", {
+              method: "DELETE",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ entryId: entry.id, tagId: tag.id }),
+            }).then(refreshTags);
+          }} />
+        ))}
+        <button
+          onClick={() => setShowTagSelector(true)}
+          className="inline-flex items-center px-1.5 py-0.5 text-xs text-gray-400 hover:text-orange-500 border border-dashed border-gray-300 hover:border-orange-400 rounded-full"
+        >
+          + タグ
+        </button>
+      </div>
+
+      {/* タグセレクタモーダル */}
+      {showTagSelector && entry && (
+        <TagSelector
+          entryId={entry.id}
+          currentTags={userTags}
+          onClose={() => setShowTagSelector(false)}
+          onTagsChanged={() => { refreshTags(); }}
+        />
+      )}
       <div
         ref={scrollRef}
         tabIndex={-1}
@@ -174,6 +226,10 @@ const ArticleDetail = forwardRef<ArticleDetailHandle, Props>(function ArticleDet
           </div>
         )}
         <div ref={contentRef} dangerouslySetInnerHTML={{ __html: content }} />
+        <LookalikeSection
+          entryId={entry?.id || null}
+          onSelectEntry={onSelectLookalike || (() => {})}
+        />
       </div>
     </div>
   );

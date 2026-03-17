@@ -62,6 +62,8 @@ export default function Home() {
   const [feedFilterQuery, setFeedFilterQuery] = useState("");
   const [articleSearchQuery, setArticleSearchQuery] = useState("");
   const [readStatusFilter, setReadStatusFilter] = useState<"all" | "unread" | "read">("all");
+  const [userTags, setUserTags] = useState<{id: number; name: string; color: string}[]>([]);
+  const [selectedTagId, setSelectedTagId] = useState<number | null>(null);
 
   // Compute feed order matching feed pane display (with duplicates for multi-category feeds)
   type SortedFeedItem = { sub: FeedlySubscription; category: string };
@@ -203,6 +205,14 @@ export default function Home() {
       }
     }
     load();
+  }, []);
+
+  // Fetch user tags
+  useEffect(() => {
+    fetch("/api/rss/tags")
+      .then(r => r.json())
+      .then(tags => { if (Array.isArray(tags)) setUserTags(tags); })
+      .catch(() => {});
   }, []);
 
   // Auto-refresh every 10 minutes
@@ -899,6 +909,22 @@ export default function Home() {
         selectedFolderLabel={selectedFolderLabel}
         filterQuery={feedFilterQuery}
         onReorderFeeds={handleReorderFeeds}
+        userTags={userTags}
+        selectedTagId={selectedTagId}
+        onSelectTag={(tagId) => {
+          setSelectedTagId(tagId);
+          if (tagId) {
+            fetch(`/api/rss/tags/entries?tagId=${tagId}`)
+              .then(r => r.json())
+              .then(entries => {
+                if (Array.isArray(entries)) {
+                  setEntries(entries);
+                  setSelectedIndex(0);
+                }
+              })
+              .catch(() => {});
+          }
+        }}
         onLogout={async () => {
           await fetch("/api/auth/logout", { method: "POST" });
           router.push("/login");
@@ -1050,6 +1076,9 @@ export default function Home() {
             translatedContent={translatedContent}
             translating={translating}
             searchQuery={articleSearchQuery}
+            onSelectLookalike={(entry) => {
+              setDetailOverride(entry);
+            }}
           />
         </div>
         {showAIPanel && (

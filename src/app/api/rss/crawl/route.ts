@@ -15,9 +15,12 @@ import {
 import type { RssFeed } from "@/lib/db";
 import { fetchAndParseFeed, convertToFeedlyEntries } from "@/lib/rss";
 import { extractArticle } from "@/lib/extract";
+import { setEntryAiTags, getEntriesWithoutAiTags } from "@/lib/db";
+import { generateAiTags, getAiConfig, stripHtml } from "@/lib/ai/tagger";
 
 const CONCURRENCY = 5;
 const EXTRACT_CONCURRENCY = 3;
+const TAG_CONCURRENCY = 2;
 
 /**
  * Auto-extract full text for new articles.
@@ -54,7 +57,43 @@ async function autoExtractEntries(
   return extracted;
 }
 
-async function crawlFeed(userId: number, feed: RssFeed): Promise<{ newEntries: number; extracted: number }> {
+/**
+ * Auto-tag new articles using AI.
+ * Fail-open: tagging failures are silently ignored.
+ */
+async function autoTagEntries(
+  userId: number,
+  entries: { id: string; title?: string; summary?: { content: string }; content?: { content: string } }[]
+): Promise<number> {
+  const config = getAiConfig(userId);
+  if (!config) return 0; // AI未設定ならスキップ
+
+  let tagged = 0;
+
+  for (let i = 0; i < entries.length; i += TAG_CONCURRENCY) {
+    const chunk = entries.slice(i, i + TAG_CONCURRENCY);
+    await Promise.allSettled(
+      chunk.map(async (entry) => {
+        // テキストを組み立て: title + summary or content
+        const title = entry.title || "";
+        const body = entry.summary?.content || entry.content?.content || "";
+        const text = `${title}\n\n${stripHtml(body)}`;
+
+        if (text.trim().length < 20) return; // 短すぎるテキストはスキップ
+
+        const tags = await generateAiTags(text, config.url, config.model);
+        if (tags.length > 0) {
+          setEntryAiTags(userId, entry.id, tags);
+          tagged++;
+        }
+      })
+    );
+  }
+
+  return tagged;
+}
+
+async function crawlFeed(userId: number, feed: RssFeed): Promise<{ newEntries: number; extracted: number; aiTagged: number }> {
   const parsed = await fetchAndParseFeed(feed.feed_url);
   const entries = convertToFeedlyEntries(
     feed.id,
@@ -107,7 +146,13 @@ async function crawlFeed(userId: number, feed: RssFeed): Promise<{ newEntries: n
     newItems as { id: string; alternate?: { href: string }[]; title?: string }[]
   );
 
-  return { newEntries: newItems.length, extracted };
+  // Auto-tag new articles with AI
+  const aiTagged = await autoTagEntries(
+    userId,
+    newItems as { id: string; title?: string; summary?: { content: string }; content?: { content: string } }[]
+  );
+
+  return { newEntries: newItems.length, extracted, aiTagged };
 }
 
 export async function POST(request: NextRequest) {
@@ -131,6 +176,7 @@ export async function POST(request: NextRequest) {
     let crawled = 0;
     let newEntries = 0;
     let totalExtracted = 0;
+    let totalAiTagged = 0;
     const errors: string[] = [];
 
     // フィードを CONCURRENCY 個ずつのチャンクに分けて並列処理
@@ -146,6 +192,7 @@ export async function POST(request: NextRequest) {
           crawled++;
           newEntries += result.value.newEntries;
           totalExtracted += result.value.extracted;
+          totalAiTagged += result.value.aiTagged;
         } else {
           const message =
             result.reason instanceof Error
@@ -156,7 +203,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    return NextResponse.json({ crawled, errors, newEntries, extracted: totalExtracted });
+    return NextResponse.json({ crawled, errors, newEntries, extracted: totalExtracted, aiTagged: totalAiTagged });
   } catch (error) {
     console.error("POST /api/rss/crawl error:", error);
     return NextResponse.json(

@@ -108,6 +108,36 @@ function initUserTables(db: Database.Database) {
       created_at INTEGER DEFAULT (unixepoch()),
       UNIQUE(user_id, feed_url)
     );
+
+    CREATE TABLE IF NOT EXISTS user_tags (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      color TEXT DEFAULT '#f97316',
+      UNIQUE(name)
+    );
+
+    CREATE TABLE IF NOT EXISTS entry_user_tags (
+      entry_id TEXT NOT NULL,
+      tag_id INTEGER NOT NULL REFERENCES user_tags(id) ON DELETE CASCADE,
+      created_at INTEGER DEFAULT (unixepoch()),
+      PRIMARY KEY (entry_id, tag_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS ai_tags (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL UNIQUE
+    );
+
+    CREATE TABLE IF NOT EXISTS entry_ai_tags (
+      entry_id TEXT NOT NULL,
+      tag_id INTEGER NOT NULL REFERENCES ai_tags(id) ON DELETE CASCADE,
+      score REAL DEFAULT 1.0,
+      PRIMARY KEY (entry_id, tag_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_entry_ai_tags_tag ON entry_ai_tags(tag_id);
+    CREATE INDEX IF NOT EXISTS idx_entry_ai_tags_entry ON entry_ai_tags(entry_id);
+    CREATE INDEX IF NOT EXISTS idx_entry_user_tags_tag ON entry_user_tags(tag_id);
   `);
 
   // FTS5 full-text search table for entries (trigram tokenizer for CJK support)
@@ -742,4 +772,189 @@ export function getRssFeedById(userId: number, feedId: string): RssFeed | null {
     .prepare("SELECT * FROM rss_feeds WHERE id = ?")
     .get(feedId) as RssFeed | undefined;
   return row ?? null;
+}
+
+// --- User Tags ---
+
+export function createUserTag(
+  userId: number,
+  name: string,
+  color?: string
+): { id: number; name: string; color: string } {
+  const db = getUserDb(userId);
+  const result = db
+    .prepare("INSERT INTO user_tags (name, color) VALUES (?, ?)")
+    .run(name, color || "#f97316");
+  return {
+    id: Number(result.lastInsertRowid),
+    name,
+    color: color || "#f97316",
+  };
+}
+
+export function deleteUserTag(userId: number, tagId: number): void {
+  const db = getUserDb(userId);
+  db.prepare("DELETE FROM user_tags WHERE id = ?").run(tagId);
+}
+
+export function getUserTags(
+  userId: number
+): { id: number; name: string; color: string }[] {
+  const db = getUserDb(userId);
+  return db
+    .prepare("SELECT id, name, color FROM user_tags ORDER BY name")
+    .all() as { id: number; name: string; color: string }[];
+}
+
+export function addUserTagToEntry(
+  userId: number,
+  entryId: string,
+  tagId: number
+): void {
+  const db = getUserDb(userId);
+  db.prepare(
+    "INSERT OR IGNORE INTO entry_user_tags (entry_id, tag_id) VALUES (?, ?)"
+  ).run(entryId, tagId);
+}
+
+export function removeUserTagFromEntry(
+  userId: number,
+  entryId: string,
+  tagId: number
+): void {
+  const db = getUserDb(userId);
+  db.prepare(
+    "DELETE FROM entry_user_tags WHERE entry_id = ? AND tag_id = ?"
+  ).run(entryId, tagId);
+}
+
+export function getEntryUserTags(
+  userId: number,
+  entryId: string
+): { id: number; name: string; color: string }[] {
+  const db = getUserDb(userId);
+  return db
+    .prepare(
+      `SELECT t.id, t.name, t.color
+       FROM user_tags t
+       JOIN entry_user_tags et ON et.tag_id = t.id
+       WHERE et.entry_id = ?
+       ORDER BY t.name`
+    )
+    .all(entryId) as { id: number; name: string; color: string }[];
+}
+
+export function getEntriesByUserTag(
+  userId: number,
+  tagId: number,
+  limit: number = 100
+): unknown[] {
+  const db = getUserDb(userId);
+  const rows = db
+    .prepare(
+      `SELECT e.data
+       FROM entries e
+       JOIN entry_user_tags et ON et.entry_id = e.id
+       WHERE et.tag_id = ?
+       ORDER BY et.created_at DESC
+       LIMIT ?`
+    )
+    .all(tagId, limit) as { data: string }[];
+  return rows.map((r) => JSON.parse(r.data));
+}
+
+// --- AI Tags ---
+
+export function getOrCreateAiTag(userId: number, name: string): number {
+  const db = getUserDb(userId);
+  const existing = db
+    .prepare("SELECT id FROM ai_tags WHERE name = ?")
+    .get(name) as { id: number } | undefined;
+  if (existing) return existing.id;
+  const result = db
+    .prepare("INSERT INTO ai_tags (name) VALUES (?)")
+    .run(name);
+  return Number(result.lastInsertRowid);
+}
+
+export function setEntryAiTags(
+  userId: number,
+  entryId: string,
+  tagNames: string[]
+): void {
+  const db = getUserDb(userId);
+  const tx = db.transaction(() => {
+    db.prepare("DELETE FROM entry_ai_tags WHERE entry_id = ?").run(entryId);
+    const insert = db.prepare(
+      "INSERT OR IGNORE INTO entry_ai_tags (entry_id, tag_id) VALUES (?, ?)"
+    );
+    for (const name of tagNames) {
+      const tagId = getOrCreateAiTag(userId, name);
+      insert.run(entryId, tagId);
+    }
+  });
+  tx();
+}
+
+export function getEntryAiTags(
+  userId: number,
+  entryId: string
+): { id: number; name: string }[] {
+  const db = getUserDb(userId);
+  return db
+    .prepare(
+      `SELECT t.id, t.name
+       FROM ai_tags t
+       JOIN entry_ai_tags et ON et.tag_id = t.id
+       WHERE et.entry_id = ?
+       ORDER BY t.name`
+    )
+    .all(entryId) as { id: number; name: string }[];
+}
+
+export function getEntriesWithoutAiTags(
+  userId: number,
+  limit: number = 50
+): { id: string; data: string }[] {
+  const db = getUserDb(userId);
+  return db
+    .prepare(
+      `SELECT e.id, e.data
+       FROM entries e
+       LEFT JOIN entry_ai_tags eat ON eat.entry_id = e.id
+       WHERE eat.entry_id IS NULL
+       LIMIT ?`
+    )
+    .all(limit) as { id: string; data: string }[];
+}
+
+// --- Lookalike (similar entries by shared AI tags) ---
+
+export function findLookalikes(
+  userId: number,
+  entryId: string,
+  minCommon: number = 2,
+  limit: number = 20
+): { entry: unknown; commonTags: number }[] {
+  const db = getUserDb(userId);
+  const rows = db
+    .prepare(
+      `SELECT e.data, COUNT(*) as common_count
+       FROM entry_ai_tags a1
+       JOIN entry_ai_tags a2 ON a1.tag_id = a2.tag_id
+       JOIN entries e ON e.id = a2.entry_id
+       WHERE a1.entry_id = ? AND a2.entry_id != ?
+       GROUP BY a2.entry_id
+       HAVING common_count >= ?
+       ORDER BY common_count DESC
+       LIMIT ?`
+    )
+    .all(entryId, entryId, minCommon, limit) as {
+    data: string;
+    common_count: number;
+  }[];
+  return rows.map((r) => ({
+    entry: JSON.parse(r.data),
+    commonTags: r.common_count,
+  }));
 }
