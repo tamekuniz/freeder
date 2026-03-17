@@ -5,6 +5,7 @@ import { requireLogin } from "@/lib/api-auth";
 export async function GET(request: NextRequest) {
   const auth = await requireLogin();
   if (auth instanceof NextResponse) return auth;
+  const { userId } = auth;
   const { searchParams } = request.nextUrl;
   const q = searchParams.get("q");
   const limit = searchParams.get("limit");
@@ -16,7 +17,7 @@ export async function GET(request: NextRequest) {
 
   try {
     const ids = streamIds ? streamIds.split(",").filter(Boolean) : undefined;
-    const results = searchEntries(q.trim(), limit ? Number(limit) : 50, ids);
+    const results = searchEntries(userId, q.trim(), limit ? Number(limit) : 50, ids);
     return NextResponse.json({
       results: results.map((r) => ({
         entry: JSON.parse(r.data),

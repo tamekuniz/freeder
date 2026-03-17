@@ -26,8 +26,14 @@ export async function POST(request: NextRequest) {
   const ollamaUrl =
     getPreference("ollama-url", auth.userId) ?? DEFAULT_OLLAMA_URL;
 
+  const apiKeys = {
+    claude: getPreference("claude-api-key", auth.userId) || undefined,
+    chatgpt: getPreference("chatgpt-api-key", auth.userId) || undefined,
+    gemini: getPreference("gemini-api-key", auth.userId) || undefined,
+  } as Partial<Record<AIProvider, string>>;
+
   try {
-    const generator = streamChatForProvider(provider, model, messages, ollamaUrl);
+    const generator = streamChatForProvider(provider, model, messages, ollamaUrl, undefined, apiKeys);
 
     const { readable, writable } = new TransformStream();
     const writer = writable.getWriter();

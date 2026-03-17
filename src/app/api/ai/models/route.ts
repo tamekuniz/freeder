@@ -11,8 +11,14 @@ export async function GET() {
   const ollamaUrl =
     getPreference("ollama-url", auth.userId) ?? DEFAULT_OLLAMA_URL;
 
+  const apiKeys = {
+    claude: getPreference("claude-api-key", auth.userId) || undefined,
+    chatgpt: getPreference("chatgpt-api-key", auth.userId) || undefined,
+    gemini: getPreference("gemini-api-key", auth.userId) || undefined,
+  };
+
   try {
-    const providers = await getAvailableProviders(ollamaUrl);
+    const providers = await getAvailableProviders(ollamaUrl, apiKeys);
 
     const allModels = await Promise.all(
       providers.map(async (p) => {

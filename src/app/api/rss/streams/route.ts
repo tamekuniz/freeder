@@ -6,6 +6,7 @@ export async function GET(request: NextRequest) {
   try {
     const auth = await requireLogin();
     if (auth instanceof NextResponse) return auth;
+    const { userId } = auth;
 
     const { searchParams } = new URL(request.url);
     const streamIds = searchParams.getAll("streamId");
@@ -29,7 +30,7 @@ export async function GET(request: NextRequest) {
     // Fetch entries from all requested streams and merge
     const allEntries: unknown[] = [];
     for (const id of streamIds) {
-      const entries = await getCachedEntries(id);
+      const entries = await getCachedEntries(userId, id);
       if (entries) allEntries.push(...entries);
     }
 

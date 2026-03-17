@@ -6,6 +6,7 @@ import { extractArticle } from "@/lib/extract";
 export async function GET(request: NextRequest) {
   const auth = await requireLogin();
   if (auth instanceof NextResponse) return auth;
+  const { userId } = auth;
 
   const url = request.nextUrl.searchParams.get("url");
   if (!url) {
@@ -37,7 +38,7 @@ export async function GET(request: NextRequest) {
 
   // Update FTS index with the richer extracted text
   if (data.textContent) {
-    updateFtsWithExtractedContent(url, data.textContent);
+    updateFtsWithExtractedContent(userId, url, data.textContent);
   }
 
   return NextResponse.json(data);

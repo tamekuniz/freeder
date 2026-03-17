@@ -5,6 +5,7 @@ import { decrementUnreadCount, incrementUnreadCount, setEntryStarred, setEntryRe
 export async function POST(request: NextRequest) {
   const auth = await requireLogin();
   if (auth instanceof NextResponse) return auth;
+  const { userId } = auth;
 
   try {
     const { action, entryIds, feedId } = await request.json();
@@ -15,18 +16,18 @@ export async function POST(request: NextRequest) {
 
     // RSSエントリの既読/未読をエントリデータとunread_countsの両方で管理
     if (action === "markAsRead") {
-      setEntryReadStatus(entryIds, false);
-      if (feedId) decrementUnreadCount(feedId, entryIds.length);
+      setEntryReadStatus(userId, entryIds, false);
+      if (feedId) decrementUnreadCount(userId, feedId, entryIds.length);
     } else if (action === "keepUnread") {
-      setEntryReadStatus(entryIds, true);
-      if (feedId) incrementUnreadCount(feedId, entryIds.length);
+      setEntryReadStatus(userId, entryIds, true);
+      if (feedId) incrementUnreadCount(userId, feedId, entryIds.length);
     }
 
     // スター/アンスターはエントリのtagsフィールドを更新
     if (action === "star" || action === "unstar") {
       const starred = action === "star";
       for (const entryId of entryIds) {
-        setEntryStarred(entryId, starred);
+        setEntryStarred(userId, entryId, starred);
       }
     }
 

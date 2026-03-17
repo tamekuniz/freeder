@@ -13,23 +13,39 @@ const PROVIDER_LABELS: Record<AIProvider, string> = {
   gemini: "Gemini",
 };
 
+/** Resolve an API key from explicit keys map, then env var fallback */
+export function resolveApiKey(
+  provider: AIProvider,
+  apiKeys?: Partial<Record<AIProvider, string>>
+): string | undefined {
+  const fromKeys = apiKeys?.[provider];
+  if (fromKeys) return fromKeys;
+  switch (provider) {
+    case "claude": return process.env.ANTHROPIC_API_KEY;
+    case "chatgpt": return process.env.OPENAI_API_KEY;
+    case "gemini": return process.env.GEMINI_API_KEY;
+    default: return undefined;
+  }
+}
+
 export async function getAvailableProviders(
-  ollamaUrl?: string
+  ollamaUrl?: string,
+  apiKeys?: Partial<Record<AIProvider, string>>
 ): Promise<ProviderConfig[]> {
   const providers: ProviderConfig[] = [];
 
   // Claude
-  if (process.env.ANTHROPIC_API_KEY) {
+  if (resolveApiKey("claude", apiKeys)) {
     providers.push({ provider: "claude", label: PROVIDER_LABELS.claude, available: true });
   }
 
   // ChatGPT
-  if (process.env.OPENAI_API_KEY) {
+  if (resolveApiKey("chatgpt", apiKeys)) {
     providers.push({ provider: "chatgpt", label: PROVIDER_LABELS.chatgpt, available: true });
   }
 
   // Gemini
-  if (process.env.GEMINI_API_KEY) {
+  if (resolveApiKey("gemini", apiKeys)) {
     providers.push({ provider: "gemini", label: PROVIDER_LABELS.gemini, available: true });
   }
 
@@ -68,27 +84,28 @@ export async function* streamChatForProvider(
   model: string,
   messages: ChatMessage[],
   ollamaUrl?: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  apiKeys?: Partial<Record<AIProvider, string>>
 ): AsyncGenerator<string> {
   switch (provider) {
     case "ollama":
       yield* ollama.streamChat(ollamaUrl || ollama.DEFAULT_OLLAMA_URL, model, messages, signal);
       break;
     case "claude": {
-      const key = process.env.ANTHROPIC_API_KEY;
-      if (!key) throw new Error("ANTHROPIC_API_KEY not configured");
+      const key = resolveApiKey("claude", apiKeys);
+      if (!key) throw new Error("Claude API key not configured");
       yield* claude.streamChat(key, model, messages, signal);
       break;
     }
     case "chatgpt": {
-      const key = process.env.OPENAI_API_KEY;
-      if (!key) throw new Error("OPENAI_API_KEY not configured");
+      const key = resolveApiKey("chatgpt", apiKeys);
+      if (!key) throw new Error("OpenAI API key not configured");
       yield* openai.streamChat(key, model, messages, signal);
       break;
     }
     case "gemini": {
-      const key = process.env.GEMINI_API_KEY;
-      if (!key) throw new Error("GEMINI_API_KEY not configured");
+      const key = resolveApiKey("gemini", apiKeys);
+      if (!key) throw new Error("Gemini API key not configured");
       yield* gemini.streamChat(key, model, messages, signal);
       break;
     }

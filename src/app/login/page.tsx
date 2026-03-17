@@ -38,7 +38,7 @@ export default function LoginPage() {
       if (me.hasToken) {
         router.push("/");
       } else {
-        router.push("/setup");
+        router.push("/settings");
       }
     } catch {
       setError("通信エラーが発生しました");

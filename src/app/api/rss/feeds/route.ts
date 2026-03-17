@@ -4,6 +4,7 @@ import {
   getRssFeeds,
   addRssFeed,
   deleteRssFeed,
+  batchUpdateFeedOrder,
 } from "@/lib/db";
 import { resolveRssFeed } from "@/lib/rss";
 
@@ -59,6 +60,28 @@ export async function POST(request: NextRequest) {
       { error: "Failed to add RSS feed" },
       { status: 500 }
     );
+  }
+}
+
+export async function PATCH(request: NextRequest) {
+  try {
+    const auth = await requireLogin();
+    if (auth instanceof NextResponse) return auth;
+    const { userId } = auth;
+
+    const { updates } = await request.json() as {
+      updates: Array<{ feedId: string; sortOrder: number; category?: string }>;
+    };
+
+    if (!updates?.length) {
+      return NextResponse.json({ error: "updates array is required" }, { status: 400 });
+    }
+
+    batchUpdateFeedOrder(userId, updates);
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error("PATCH /api/rss/feeds error:", error);
+    return NextResponse.json({ error: "Failed to update feed order" }, { status: 500 });
   }
 }
 

@@ -53,8 +53,15 @@ export default function Home() {
   const [translating, setTranslating] = useState(false);
   const [translatedContent, setTranslatedContent] = useState<string | null>(null);
 
-  // Article text search state
+  // AI menu state
+  const [showAIMenu, setShowAIMenu] = useState(false);
+  const [aiMenuPos, setAiMenuPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+
+  // Unified search state
+  const [searchTarget, setSearchTarget] = useState<"feed" | "article">("article");
+  const [feedFilterQuery, setFeedFilterQuery] = useState("");
   const [articleSearchQuery, setArticleSearchQuery] = useState("");
+  const [readStatusFilter, setReadStatusFilter] = useState<"all" | "unread" | "read">("all");
 
   // Compute feed order matching feed pane display (with duplicates for multi-category feeds)
   type SortedFeedItem = { sub: FeedlySubscription; category: string };
@@ -116,20 +123,19 @@ export default function Home() {
   useEffect(() => {
     async function load() {
       try {
-        // Check auth state first
-        const meRes = await fetch("/api/auth/me");
+        // Fetch auth, preferences, and RSS feeds all in parallel
+        const [meRes, prefsRes, rssRes] = await Promise.all([
+          fetch("/api/auth/me"),
+          fetch("/api/preferences"),
+          fetch("/api/rss/feeds"),
+        ]);
+
         const me = await meRes.json();
         if (!me.ok) {
           router.push("/login");
           return;
         }
         setUsername(me.username);
-
-        // Fetch preferences and RSS feeds in parallel
-        const [prefsRes, rssRes] = await Promise.all([
-          fetch("/api/preferences"),
-          fetch("/api/rss/feeds"),
-        ]);
 
         // Apply preferences
         const prefs = await prefsRes.json();
@@ -141,6 +147,14 @@ export default function Home() {
           try {
             setCollapsedFolders(JSON.parse(prefs["collapsed-folders"]));
           } catch { /* ignore parse errors */ }
+        }
+        if (prefs["search-target"]) {
+          const t = prefs["search-target"];
+          if (t === "feed" || t === "article") setSearchTarget(t);
+        }
+        if (prefs["read-status-filter"]) {
+          const f = prefs["read-status-filter"];
+          if (f === "all" || f === "unread" || f === "read") setReadStatusFilter(f);
         }
 
         // Apply RSS feeds
@@ -271,11 +285,19 @@ export default function Home() {
 
   // Compute selected entry (used for extraction and rendering)
   const filteredEntries = useMemo(
-    () =>
-      showStarredOnly
-        ? entries.filter((e) => e.tags?.some((t) => t.id.includes("global.saved")))
-        : entries,
-    [entries, showStarredOnly]
+    () => {
+      let result = entries;
+      if (showStarredOnly) {
+        result = result.filter((e) => e.tags?.some((t) => t.id.includes("global.saved")));
+      }
+      if (readStatusFilter === "unread") {
+        result = result.filter((e) => e.unread);
+      } else if (readStatusFilter === "read") {
+        result = result.filter((e) => !e.unread);
+      }
+      return result;
+    },
+    [entries, showStarredOnly, readStatusFilter]
   );
   const selectedEntry = detailOverride || filteredEntries[selectedIndex] || null;
   const selectedEntryUrl = selectedEntry?.alternate?.[0]?.href ?? null;
@@ -766,6 +788,31 @@ export default function Home() {
     setShowStarredOnly((prev) => !prev);
   }, []);
 
+  const handleReorderFeeds = useCallback(async (updates: Array<{ feedId: string; sortOrder: number; category?: string }>) => {
+    // Optimistically update subscriptions with new categories
+    setSubscriptions(prev => {
+      const updated = [...prev];
+      for (const u of updates) {
+        if (u.category !== undefined) {
+          const idx = updated.findIndex(s => s.id === u.feedId);
+          if (idx >= 0) {
+            updated[idx] = {
+              ...updated[idx],
+              categories: [{ id: `rss-cat:${u.category}`, label: u.category }],
+            };
+          }
+        }
+      }
+      return updated;
+    });
+    // Persist to server
+    fetch("/api/rss/feeds", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ updates }),
+    }).catch(() => {});
+  }, []);
+
   const handleToggleFolder = useCallback((label: string) => {
     setCollapsedFolders((prev) => {
       const next = { ...prev, [label]: !prev[label] };
@@ -850,7 +897,8 @@ export default function Home() {
         onDeleteFeed={handleDeleteFeed}
         onSelectFolder={handleSelectFolder}
         selectedFolderLabel={selectedFolderLabel}
-        onSettings={() => router.push("/setup")}
+        filterQuery={feedFilterQuery}
+        onReorderFeeds={handleReorderFeeds}
         onLogout={async () => {
           await fetch("/api/auth/logout", { method: "POST" });
           router.push("/login");
@@ -883,6 +931,38 @@ export default function Home() {
         {/* Article pane header: search + action icons */}
         <div className="px-3 py-2 border-b border-orange-600 bg-orange-500 flex-shrink-0 min-h-[52px] flex items-center gap-2">
             <div className="flex items-center gap-1 flex-shrink-0">
+              {/* Refresh (force re-extract) */}
+              <button
+                onClick={() => { if (selectedEntryUrl) doExtract(selectedEntryUrl, undefined, true); }}
+                className={`p-1.5 rounded transition-colors ${extracting ? "text-white bg-orange-600 animate-spin" : "text-white hover:bg-orange-600"}`}
+                title="再取得"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
+                </svg>
+              </button>
+              {/* AI menu */}
+              <button
+                onClick={(e) => {
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  setAiMenuPos({ x: rect.left, y: rect.bottom + 4 });
+                  setShowAIMenu(prev => !prev);
+                }}
+                className={`px-1.5 py-0.5 rounded transition-colors font-bold text-xs ${showAIPanel || showAIMenu ? "text-white bg-orange-600" : "text-white hover:bg-orange-600"}`}
+                title="AI 機能"
+              >
+                AI
+              </button>
+              {/* WebView */}
+              <button
+                onClick={() => setSitePreviewEntry(prev => prev?.id === selectedEntry?.id ? null : selectedEntry)}
+                className={`p-1.5 rounded transition-colors ${sitePreviewEntry ? "text-white bg-orange-600" : "text-white hover:bg-orange-600"}`}
+                title="WebView"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>
+                </svg>
+              </button>
               {/* Translate */}
               <button
                 ref={(el) => { if (el) el.dataset.translateBtn = "1"; }}
@@ -891,31 +971,11 @@ export default function Home() {
                   setTranslateMenuPos({ x: rect.right, y: rect.bottom + 4 });
                   setShowTranslateMenu(prev => !prev);
                 }}
-                className={`p-1.5 rounded transition-colors ${translating ? "text-white bg-orange-600" : "text-white/85 hover:text-white hover:bg-orange-600"}`}
+                className={`p-1.5 rounded transition-colors ${translating ? "text-white bg-orange-600" : "text-white hover:bg-orange-600"}`}
                 title="翻訳"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M5 8l6 6"/><path d="M4 14l6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="M22 22l-5-10-5 10"/><path d="M14 18h6"/>
-                </svg>
-              </button>
-              {/* AI panel toggle */}
-              <button
-                onClick={() => setShowAIPanel(prev => !prev)}
-                className={`p-1.5 rounded transition-colors ${showAIPanel ? "text-white bg-orange-600" : "text-white/85 hover:text-white hover:bg-orange-600"}`}
-                title="AI パネル"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M12 2a4 4 0 0 1 4 4v1h1a3 3 0 0 1 3 3v1a3 3 0 0 1-3 3h-1v4a2 2 0 0 1-2 2H10a2 2 0 0 1-2-2v-4H7a3 3 0 0 1-3-3v-1a3 3 0 0 1 3-3h1V6a4 4 0 0 1 4-4z"/><circle cx="10" cy="10" r="1"/><circle cx="14" cy="10" r="1"/>
-                </svg>
-              </button>
-              {/* Site preview */}
-              <button
-                onClick={() => setSitePreviewEntry(prev => prev?.id === selectedEntry?.id ? null : selectedEntry)}
-                className={`p-1.5 rounded transition-colors ${sitePreviewEntry ? "text-white bg-orange-600" : "text-white/85 hover:text-white hover:bg-orange-600"}`}
-                title="サイトプレビュー"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>
                 </svg>
               </button>
               {/* Open in new tab */}
@@ -924,8 +984,8 @@ export default function Home() {
                   href={selectedEntryUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="p-1.5 text-white/85 hover:text-white hover:bg-orange-600 rounded transition-colors"
-                  title="元サイトを開く"
+                  className="p-1.5 text-white hover:bg-orange-600 rounded transition-colors"
+                  title="別タブで開く"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
@@ -934,7 +994,7 @@ export default function Home() {
               ) : (
                 <span
                   className="p-1.5 text-white opacity-40 cursor-not-allowed rounded"
-                  title="元サイトを開く"
+                  title="別タブで開く"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
@@ -942,14 +1002,40 @@ export default function Home() {
                 </span>
               )}
             </div>
-          {/* Article text search */}
-          <div className="flex-shrink-0 ml-auto">
+          {/* Search target selector */}
+          <div className="flex bg-orange-600 text-[10px] font-medium ml-auto flex-shrink-0">
+            {([["feed", "FEED"], ["article", "ARTICLE"]] as const).map(([key, label]) => (
+              <button
+                key={key}
+                onClick={() => { setSearchTarget(key); fetch("/api/preferences", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: "search-target", value: key }) }); }}
+                className={`px-2 py-0.5 transition-colors ${searchTarget === key ? "bg-white text-orange-600" : "text-white/90 hover:text-white"}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {/* Read status filter */}
+          <div className="flex bg-orange-600 text-[10px] font-medium flex-shrink-0">
+            {([["all", "ALL"], ["unread", "UNREAD"], ["read", "READ"]] as const).map(([key, label]) => (
+              <button
+                key={key}
+                onClick={() => { setReadStatusFilter(key); fetch("/api/preferences", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: "read-status-filter", value: key }) }); }}
+                className={`px-2 py-0.5 transition-colors ${readStatusFilter === key ? "bg-white text-orange-600" : "text-white/90 hover:text-white"}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {/* Search input */}
+          <div className="relative flex-shrink-0">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none">
+              <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
             <input
               type="text"
-              placeholder="記事内を検索..."
-              value={articleSearchQuery}
-              onChange={(e) => setArticleSearchQuery(e.target.value)}
-              className="w-48 px-2 py-1 text-sm bg-white text-gray-800 placeholder-gray-400 border border-orange-300 rounded focus:outline-none focus:border-orange-500 focus:ring-1 focus:ring-orange-500"
+              value={searchTarget === "feed" ? feedFilterQuery : articleSearchQuery}
+              onChange={(e) => searchTarget === "feed" ? setFeedFilterQuery(e.target.value) : setArticleSearchQuery(e.target.value)}
+              className="w-52 pl-7 pr-2 py-1 text-sm bg-white text-gray-800 border border-orange-300 rounded focus:outline-none focus:border-orange-500 focus:ring-1 focus:ring-orange-500"
             />
           </div>
         </div>
@@ -976,6 +1062,65 @@ export default function Home() {
         <KeyboardHint />
       </div>
 
+      {showAIMenu && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setShowAIMenu(false)} />
+          <div
+            className="fixed z-50 bg-white rounded-md shadow-lg border border-gray-200 py-1 min-w-[180px]"
+            style={{ left: aiMenuPos.x, top: aiMenuPos.y }}
+          >
+            <div className="px-3 py-1.5 text-xs text-gray-400">AI 機能</div>
+            <hr className="border-gray-100" />
+            <button
+              onClick={() => { setShowAIPanel(prev => !prev); setShowAIMenu(false); }}
+              className="w-full text-left px-3 py-1.5 text-sm text-orange-500 hover:bg-orange-50 transition-colors"
+            >
+              チャット（自由質問）
+            </button>
+            <button
+              onClick={() => {
+                if (!selectedEntry) return;
+                const content = extractedContent || selectedEntry.content?.content || selectedEntry.summary?.content || "";
+                const text = stripHtml(content).slice(0, 8000);
+                setShowAIPanel(true);
+                setShowAIMenu(false);
+                // Dispatch a custom event for AIPanel to pick up the prompt
+                window.dispatchEvent(new CustomEvent("ai-prompt", { detail: { prompt: `以下の記事を日本語で3〜5文で要約してください。\n\n${text}` } }));
+              }}
+              className="w-full text-left px-3 py-1.5 text-sm text-orange-500 hover:bg-orange-50 transition-colors"
+            >
+              要約
+            </button>
+            <button
+              onClick={() => {
+                if (!selectedEntry) return;
+                const content = extractedContent || selectedEntry.content?.content || selectedEntry.summary?.content || "";
+                const text = stripHtml(content).slice(0, 8000);
+                setShowAIPanel(true);
+                setShowAIMenu(false);
+                window.dispatchEvent(new CustomEvent("ai-prompt", { detail: { prompt: `以下の記事のキーポイントを箇条書きで抽出してください。\n\n${text}` } }));
+              }}
+              className="w-full text-left px-3 py-1.5 text-sm text-orange-500 hover:bg-orange-50 transition-colors"
+            >
+              キーポイント抽出
+            </button>
+            <button
+              onClick={() => {
+                if (!selectedEntry) return;
+                const content = extractedContent || selectedEntry.content?.content || selectedEntry.summary?.content || "";
+                const text = stripHtml(content).slice(0, 8000);
+                setShowAIPanel(true);
+                setShowAIMenu(false);
+                window.dispatchEvent(new CustomEvent("ai-prompt", { detail: { prompt: `以下の記事と似たテーマの記事やリソースを提案してください（ルックアライク）。記事のトピック、キーワード、関連分野を分析して、おすすめを5つ挙げてください。\n\n${text}` } }));
+              }}
+              className="w-full text-left px-3 py-1.5 text-sm text-orange-500 hover:bg-orange-50 transition-colors"
+            >
+              ルックアライク
+            </button>
+          </div>
+        </>
+      )}
+
       {showTranslateMenu && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setShowTranslateMenu(false)} />
@@ -987,7 +1132,7 @@ export default function Home() {
               <button
                 key={service}
                 onClick={() => { handleTranslate(service); setShowTranslateMenu(false); }}
-                className="w-full text-left px-3 py-1.5 text-sm text-gray-700 hover:bg-orange-50 transition-colors"
+                className="w-full text-left px-3 py-1.5 text-sm text-orange-500 hover:bg-orange-50 transition-colors"
               >
                 {label}
               </button>

@@ -3,21 +3,61 @@ import path from "path";
 import crypto from "crypto";
 import { stripHtml } from "./html-strip";
 
-const DB_PATH = path.join(process.cwd(), "freeder-cache.db");
+const DB_DIR = process.cwd();
+const GLOBAL_DB_PATH = path.join(DB_DIR, "freeder-cache.db");
 
-let db: Database.Database | null = null;
+// --- Global DB (users + extracted_content) ---
+
+let globalDb: Database.Database | null = null;
 
 function getDb(): Database.Database {
+  if (!globalDb) {
+    globalDb = new Database(GLOBAL_DB_PATH);
+    globalDb.pragma("journal_mode = WAL");
+    globalDb.pragma("foreign_keys = ON");
+    initGlobalTables(globalDb);
+  }
+  return globalDb;
+}
+
+function initGlobalTables(db: Database.Database) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    CREATE TABLE IF NOT EXISTS extracted_content (
+      url TEXT PRIMARY KEY,
+      title TEXT,
+      content TEXT NOT NULL,
+      text_content TEXT,
+      excerpt TEXT,
+      extracted_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+  `);
+}
+
+// --- Per-User DB ---
+
+const userDbMap = new Map<number, Database.Database>();
+
+export function getUserDb(userId: number): Database.Database {
+  let db = userDbMap.get(userId);
   if (!db) {
-    db = new Database(DB_PATH);
+    const dbPath = path.join(DB_DIR, `freeder-user-${userId}.db`);
+    db = new Database(dbPath);
     db.pragma("journal_mode = WAL");
     db.pragma("foreign_keys = ON");
-    initTables(db);
+    initUserTables(db);
+    userDbMap.set(userId, db);
   }
   return db;
 }
 
-function initTables(db: Database.Database) {
+function initUserTables(db: Database.Database) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS subscriptions (
       id TEXT PRIMARY KEY,
@@ -46,26 +86,12 @@ function initTables(db: Database.Database) {
       updated_at INTEGER NOT NULL DEFAULT (unixepoch())
     );
 
-    CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      username TEXT NOT NULL UNIQUE,
-      password_hash TEXT NOT NULL,
-      created_at INTEGER NOT NULL DEFAULT (unixepoch())
-    );
-
     CREATE TABLE IF NOT EXISTS user_feedly_tokens (
       user_id INTEGER PRIMARY KEY,
       access_token TEXT NOT NULL,
+      refresh_token TEXT,
+      expires_at INTEGER,
       updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-    );
-
-    CREATE TABLE IF NOT EXISTS extracted_content (
-      url TEXT PRIMARY KEY,
-      title TEXT,
-      content TEXT NOT NULL,
-      text_content TEXT,
-      excerpt TEXT,
-      extracted_at INTEGER NOT NULL DEFAULT (unixepoch())
     );
 
     CREATE TABLE IF NOT EXISTS rss_feeds (
@@ -75,6 +101,7 @@ function initTables(db: Database.Database) {
       title TEXT,
       site_url TEXT,
       category TEXT DEFAULT 'RSS',
+      sort_order INTEGER DEFAULT 0,
       last_fetched_at INTEGER,
       poll_interval INTEGER DEFAULT 3600,
       avg_post_interval INTEGER,
@@ -83,30 +110,7 @@ function initTables(db: Database.Database) {
     );
   `);
 
-  // Migration: add user_id column to cache_meta for per-user preferences
-  const cols = db
-    .prepare("PRAGMA table_info(cache_meta)")
-    .all() as { name: string }[];
-  if (!cols.some((c) => c.name === "user_id")) {
-    db.exec("ALTER TABLE cache_meta ADD COLUMN user_id INTEGER DEFAULT NULL");
-  }
-  // Recreate without old PRIMARY KEY constraint by using a unique index
-  db.exec(
-    "CREATE UNIQUE INDEX IF NOT EXISTS idx_cache_meta_user_key ON cache_meta(COALESCE(user_id, 0), key)"
-  );
-
-  // Add refresh_token and expires_at columns if they don't exist
-  const columns = db.prepare("PRAGMA table_info(user_feedly_tokens)").all() as { name: string }[];
-  const columnNames = columns.map(c => c.name);
-  if (!columnNames.includes("refresh_token")) {
-    db.exec("ALTER TABLE user_feedly_tokens ADD COLUMN refresh_token TEXT");
-  }
-  if (!columnNames.includes("expires_at")) {
-    db.exec("ALTER TABLE user_feedly_tokens ADD COLUMN expires_at INTEGER");
-  }
-
   // FTS5 full-text search table for entries (trigram tokenizer for CJK support)
-  // Check if FTS table exists and uses correct tokenizer; recreate if needed
   const ftsExists = db
     .prepare(
       "SELECT sql FROM sqlite_master WHERE type='table' AND name='entries_fts'"
@@ -114,7 +118,6 @@ function initTables(db: Database.Database) {
     .get() as { sql: string } | undefined;
 
   if (ftsExists && !ftsExists.sql.includes("trigram")) {
-    // Old unicode61 tokenizer — drop and recreate with trigram
     db.exec("DROP TABLE IF EXISTS entries_fts");
   }
 
@@ -164,8 +167,8 @@ function rebuildFtsIndex(db: Database.Database): void {
 
 // --- Subscriptions ---
 
-export function cacheSubscriptions(subs: unknown[]): void {
-  const db = getDb();
+export function cacheSubscriptions(userId: number, subs: unknown[]): void {
+  const db = getUserDb(userId);
   const upsert = db.prepare(
     "INSERT OR REPLACE INTO subscriptions (id, data, updated_at) VALUES (?, ?, unixepoch())"
   );
@@ -178,8 +181,8 @@ export function cacheSubscriptions(subs: unknown[]): void {
   tx();
 }
 
-export function getCachedSubscriptions(): unknown[] | null {
-  const db = getDb();
+export function getCachedSubscriptions(userId: number): unknown[] | null {
+  const db = getUserDb(userId);
   const rows = db
     .prepare("SELECT data FROM subscriptions ORDER BY rowid")
     .all() as { data: string }[];
@@ -189,8 +192,8 @@ export function getCachedSubscriptions(): unknown[] | null {
 
 // --- Entries (per stream) ---
 
-export function cacheEntries(streamId: string, entries: unknown[]): void {
-  const db = getDb();
+export function cacheEntries(userId: number, streamId: string, entries: unknown[]): void {
+  const db = getUserDb(userId);
   const upsert = db.prepare(
     "INSERT OR REPLACE INTO entries (id, stream_id, data, updated_at) VALUES (?, ?, ?, unixepoch())"
   );
@@ -244,8 +247,8 @@ export function cacheEntries(streamId: string, entries: unknown[]): void {
   tx();
 }
 
-export function getCachedEntries(streamId: string): unknown[] | null {
-  const db = getDb();
+export function getCachedEntries(userId: number, streamId: string): unknown[] | null {
+  const db = getUserDb(userId);
   const rows = db
     .prepare("SELECT data FROM entries WHERE stream_id = ? ORDER BY rowid")
     .all(streamId) as { data: string }[];
@@ -256,16 +259,15 @@ export function getCachedEntries(streamId: string): unknown[] | null {
 // --- Search ---
 
 export function searchEntries(
+  userId: number,
   query: string,
   limit: number = 50,
   streamIds?: string[]
 ): { id: string; data: string; snippet: string; feedTitle: string }[] {
-  const db = getDb();
+  const db = getUserDb(userId);
   const trimmed = query.trim();
   if (!trimmed) return [];
 
-  // With trigram tokenizer, use quoted string for exact substring matching
-  // Search only title and content columns, exclude feed_title
   const ftsQuery = `{title content}: "${trimmed.replace(/"/g, '""')}"`;
 
   if (streamIds && streamIds.length > 0) {
@@ -313,8 +315,8 @@ export function searchEntries(
 
 // --- Unread Counts ---
 
-export function cacheUnreadCounts(counts: Record<string, number>): void {
-  const db = getDb();
+export function cacheUnreadCounts(userId: number, counts: Record<string, number>): void {
+  const db = getUserDb(userId);
   const upsert = db.prepare(
     "INSERT OR REPLACE INTO unread_counts (id, count, updated_at) VALUES (?, ?, unixepoch())"
   );
@@ -326,8 +328,8 @@ export function cacheUnreadCounts(counts: Record<string, number>): void {
   tx();
 }
 
-export function getCachedUnreadCounts(): Record<string, number> | null {
-  const db = getDb();
+export function getCachedUnreadCounts(userId: number): Record<string, number> | null {
+  const db = getUserDb(userId);
   const rows = db
     .prepare("SELECT id, count FROM unread_counts")
     .all() as { id: string; count: number }[];
@@ -339,21 +341,21 @@ export function getCachedUnreadCounts(): Record<string, number> | null {
   return result;
 }
 
-export function decrementUnreadCount(feedId: string, by: number = 1): void {
-  const db = getDb();
+export function decrementUnreadCount(userId: number, feedId: string, by: number = 1): void {
+  const db = getUserDb(userId);
   db.prepare(
     "UPDATE unread_counts SET count = MAX(0, count - ?), updated_at = unixepoch() WHERE id = ?"
   ).run(by, feedId);
 }
 
-export function incrementUnreadCount(feedId: string, by: number = 1): void {
-  const db = getDb();
+export function incrementUnreadCount(userId: number, feedId: string, by: number = 1): void {
+  const db = getUserDb(userId);
   db.prepare(
     "UPDATE unread_counts SET count = count + ?, updated_at = unixepoch() WHERE id = ?"
   ).run(by, feedId);
 }
 
-// --- Users ---
+// --- Users (global DB) ---
 
 export function createUser(
   username: string,
@@ -414,14 +416,14 @@ export function getUserCount(): number {
 // --- Feedly Tokens ---
 
 export function setFeedlyToken(userId: number, token: string): void {
-  const db = getDb();
+  const db = getUserDb(userId);
   db.prepare(
     "INSERT OR REPLACE INTO user_feedly_tokens (user_id, access_token, updated_at) VALUES (?, ?, unixepoch())"
   ).run(userId, token);
 }
 
 export function getFeedlyToken(userId: number): string | null {
-  const db = getDb();
+  const db = getUserDb(userId);
   const row = db
     .prepare(
       "SELECT access_token FROM user_feedly_tokens WHERE user_id = ?"
@@ -430,7 +432,7 @@ export function getFeedlyToken(userId: number): string | null {
   return row?.access_token ?? null;
 }
 
-// --- Extracted Content ---
+// --- Extracted Content (global DB — shared URL cache) ---
 
 export interface ExtractedContent {
   title: string | null;
@@ -469,16 +471,14 @@ export function saveExtractedContent(
 
 /**
  * Update the FTS index for entries matching the given URL with richer extracted text.
- * Looks up entry IDs by matching alternate[].href in the entry JSON data,
- * then replaces the FTS content with the extracted full text.
  */
 export function updateFtsWithExtractedContent(
+  userId: number,
   url: string,
   extractedText: string
 ): void {
-  const db = getDb();
+  const db = getUserDb(userId);
 
-  // Find all entries whose alternate URL matches
   const rows = db
     .prepare("SELECT id, data FROM entries WHERE data LIKE ?")
     .all(`%${url.replace(/%/g, "\\%")}%`) as { id: string; data: string }[];
@@ -491,7 +491,6 @@ export function updateFtsWithExtractedContent(
   const tx = db.transaction(() => {
     for (const row of rows) {
       const entry = JSON.parse(row.data);
-      // Verify this entry actually has a matching alternate URL
       const alternates = entry.alternate as { href: string }[] | undefined;
       if (!alternates?.some((a: { href: string }) => a.href === url)) continue;
 
@@ -504,24 +503,17 @@ export function updateFtsWithExtractedContent(
   tx();
 }
 
-// --- UI Preferences (cache_meta, per-user) ---
+// --- UI Preferences (cache_meta, per-user DB) ---
 
 export function getPreference(
   key: string,
   userId?: number
 ): string | null {
-  const db = getDb();
-  const row = userId != null
-    ? (db
-        .prepare(
-          "SELECT value FROM cache_meta WHERE key = ? AND user_id = ?"
-        )
-        .get(key, userId) as { value: string } | undefined)
-    : (db
-        .prepare(
-          "SELECT value FROM cache_meta WHERE key = ? AND user_id IS NULL"
-        )
-        .get(key) as { value: string } | undefined);
+  if (userId == null) return null;
+  const db = getUserDb(userId);
+  const row = db
+    .prepare("SELECT value FROM cache_meta WHERE key = ?")
+    .get(key) as { value: string } | undefined;
   return row?.value ?? null;
 }
 
@@ -530,52 +522,25 @@ export function setPreference(
   value: string,
   userId?: number
 ): void {
-  const db = getDb();
-  if (userId != null) {
-    // Delete + insert to handle the composite uniqueness
-    db.prepare(
-      "DELETE FROM cache_meta WHERE key = ? AND user_id = ?"
-    ).run(key, userId);
-    db.prepare(
-      "INSERT INTO cache_meta (key, value, user_id, updated_at) VALUES (?, ?, ?, unixepoch())"
-    ).run(key, value, userId);
-  } else {
-    db.prepare(
-      "INSERT OR REPLACE INTO cache_meta (key, value, updated_at) VALUES (?, ?, unixepoch())"
-    ).run(key, value);
-  }
+  if (userId == null) return;
+  const db = getUserDb(userId);
+  db.prepare(
+    "INSERT OR REPLACE INTO cache_meta (key, value, updated_at) VALUES (?, ?, unixepoch())"
+  ).run(key, value);
 }
 
 export function getAllPreferences(
   userId?: number
 ): Record<string, string> {
-  const db = getDb();
+  if (userId == null) return {};
+  const db = getUserDb(userId);
   const result: Record<string, string> = {};
-
-  if (userId != null) {
-    // First load global (user_id IS NULL) as fallback
-    const globalRows = db
-      .prepare("SELECT key, value FROM cache_meta WHERE user_id IS NULL")
-      .all() as { key: string; value: string }[];
-    for (const r of globalRows) {
-      result[r.key] = r.value;
-    }
-    // Then overlay user-specific prefs (takes priority)
-    const userRows = db
-      .prepare("SELECT key, value FROM cache_meta WHERE user_id = ?")
-      .all(userId) as { key: string; value: string }[];
-    for (const r of userRows) {
-      result[r.key] = r.value;
-    }
-  } else {
-    const rows = db
-      .prepare("SELECT key, value FROM cache_meta WHERE user_id IS NULL")
-      .all() as { key: string; value: string }[];
-    for (const r of rows) {
-      result[r.key] = r.value;
-    }
+  const rows = db
+    .prepare("SELECT key, value FROM cache_meta")
+    .all() as { key: string; value: string }[];
+  for (const r of rows) {
+    result[r.key] = r.value;
   }
-
   return result;
 }
 
@@ -588,12 +553,12 @@ export interface FeedlyTokenFull {
 }
 
 export function getFeedlyTokenFull(userId: number): FeedlyTokenFull | null {
-  const db = getDb();
+  const db = getUserDb(userId);
   return db.prepare("SELECT access_token, refresh_token, expires_at FROM user_feedly_tokens WHERE user_id = ?").get(userId) as FeedlyTokenFull | null;
 }
 
 export function setFeedlyTokenWithRefresh(userId: number, accessToken: string, refreshToken: string | null, expiresIn: number | null): void {
-  const db = getDb();
+  const db = getUserDb(userId);
   const expiresAt = expiresIn ? Math.floor(Date.now() / 1000) + expiresIn : null;
   db.prepare(
     `INSERT INTO user_feedly_tokens (user_id, access_token, refresh_token, expires_at, updated_at)
@@ -602,17 +567,9 @@ export function setFeedlyTokenWithRefresh(userId: number, accessToken: string, r
   ).run(userId, accessToken, refreshToken, expiresAt, accessToken, refreshToken, expiresAt);
 }
 
-// Migrate shared preferences to a user (for first user registration)
-export function migratePreferencesToUser(userId: number): void {
-  const db = getDb();
-  const rows = db
-    .prepare("SELECT key, value FROM cache_meta WHERE user_id IS NULL")
-    .all() as { key: string; value: string }[];
-  for (const r of rows) {
-    db.prepare(
-      "INSERT OR IGNORE INTO cache_meta (key, value, user_id, updated_at) VALUES (?, ?, ?, unixepoch())"
-    ).run(r.key, r.value, userId);
-  }
+// Migrate shared preferences to a user (no-op now, kept for API compatibility)
+export function migratePreferencesToUser(_userId: number): void {
+  // With per-user DBs, preferences are already isolated — nothing to migrate
 }
 
 // --- RSS Feeds ---
@@ -630,13 +587,13 @@ export interface RssFeed {
   created_at: number;
 }
 
-function rssFeedId(userId: number, feedUrl: string): string {
+function rssFeedId(feedUrl: string): string {
   const hash = crypto
     .createHash("sha256")
     .update(feedUrl)
     .digest("hex")
     .slice(0, 12);
-  return `rss:${userId}:${hash}`;
+  return `rss:${hash}`;
 }
 
 export function addRssFeed(
@@ -646,8 +603,8 @@ export function addRssFeed(
   siteUrl?: string,
   category?: string
 ): string {
-  const db = getDb();
-  const id = rssFeedId(userId, feedUrl);
+  const db = getUserDb(userId);
+  const id = rssFeedId(feedUrl);
   db.prepare(
     `INSERT OR REPLACE INTO rss_feeds (id, user_id, feed_url, title, site_url, category)
      VALUES (?, ?, ?, ?, ?, ?)`
@@ -656,20 +613,20 @@ export function addRssFeed(
 }
 
 export function getRssFeeds(userId: number): (RssFeed & { unread_count: number })[] {
-  const db = getDb();
+  const db = getUserDb(userId);
   return db
     .prepare(
       `SELECT rf.*, COALESCE(uc.count, 0) as unread_count
        FROM rss_feeds rf
        LEFT JOIN unread_counts uc ON uc.id = rf.id
        WHERE rf.user_id = ?
-       ORDER BY rf.created_at`
+       ORDER BY rf.sort_order, rf.created_at`
     )
     .all(userId) as (RssFeed & { unread_count: number })[];
 }
 
 export function deleteRssFeed(userId: number, feedId: string): boolean {
-  const db = getDb();
+  const db = getUserDb(userId);
   const result = db
     .prepare("DELETE FROM rss_feeds WHERE id = ? AND user_id = ?")
     .run(feedId, userId);
@@ -677,10 +634,11 @@ export function deleteRssFeed(userId: number, feedId: string): boolean {
 }
 
 export function updateRssFeedMeta(
+  userId: number,
   feedId: string,
   opts: { title?: string; category?: string; pollInterval?: number; avgPostInterval?: number }
 ): void {
-  const db = getDb();
+  const db = getUserDb(userId);
   const sets: string[] = [];
   const params: unknown[] = [];
 
@@ -709,8 +667,8 @@ export function updateRssFeedMeta(
   );
 }
 
-export function updateRssFeedLastFetched(feedId: string): void {
-  const db = getDb();
+export function updateRssFeedLastFetched(userId: number, feedId: string): void {
+  const db = getUserDb(userId);
   db.prepare(
     "UPDATE rss_feeds SET last_fetched_at = unixepoch() WHERE id = ?"
   ).run(feedId);
@@ -718,8 +676,8 @@ export function updateRssFeedLastFetched(feedId: string): void {
 
 // --- Entry Data Patch ---
 
-function patchEntryData(entryId: string, mutate: (entry: Record<string, unknown>) => void): void {
-  const db = getDb();
+function patchEntryData(userId: number, entryId: string, mutate: (entry: Record<string, unknown>) => void): void {
+  const db = getUserDb(userId);
   const row = db.prepare("SELECT data FROM entries WHERE id = ?")
     .get(entryId) as { data: string } | undefined;
   if (!row) return;
@@ -729,19 +687,19 @@ function patchEntryData(entryId: string, mutate: (entry: Record<string, unknown>
     .run(JSON.stringify(entry), entryId);
 }
 
-export function setEntryReadStatus(entryIds: string[], unread: boolean): void {
-  const db = getDb();
+export function setEntryReadStatus(userId: number, entryIds: string[], unread: boolean): void {
+  const db = getUserDb(userId);
   const tx = db.transaction(() => {
     for (const entryId of entryIds) {
-      patchEntryData(entryId, (entry) => { entry.unread = unread; });
+      patchEntryData(userId, entryId, (entry) => { entry.unread = unread; });
     }
   });
   tx();
 }
 
-export function setEntryStarred(entryId: string, starred: boolean): void {
+export function setEntryStarred(userId: number, entryId: string, starred: boolean): void {
   const savedTag = { id: "user/global.saved", label: "Saved" };
-  patchEntryData(entryId, (entry) => {
+  patchEntryData(userId, entryId, (entry) => {
     const tags = (entry.tags || []) as { id: string }[];
     if (starred) {
       if (!tags.some(t => t.id.includes("global.saved"))) {
@@ -753,8 +711,33 @@ export function setEntryStarred(entryId: string, starred: boolean): void {
   });
 }
 
-export function getRssFeedById(feedId: string): RssFeed | null {
-  const db = getDb();
+export function updateFeedOrder(userId: number, feedId: string, sortOrder: number, category?: string): void {
+  const db = getUserDb(userId);
+  if (category !== undefined) {
+    db.prepare("UPDATE rss_feeds SET sort_order = ?, category = ? WHERE id = ?").run(sortOrder, category, feedId);
+  } else {
+    db.prepare("UPDATE rss_feeds SET sort_order = ? WHERE id = ?").run(sortOrder, feedId);
+  }
+}
+
+export function batchUpdateFeedOrder(userId: number, updates: Array<{ feedId: string; sortOrder: number; category?: string }>): void {
+  const db = getUserDb(userId);
+  const stmtWithCat = db.prepare("UPDATE rss_feeds SET sort_order = ?, category = ? WHERE id = ?");
+  const stmtNoCat = db.prepare("UPDATE rss_feeds SET sort_order = ? WHERE id = ?");
+  const transaction = db.transaction(() => {
+    for (const u of updates) {
+      if (u.category !== undefined) {
+        stmtWithCat.run(u.sortOrder, u.category, u.feedId);
+      } else {
+        stmtNoCat.run(u.sortOrder, u.feedId);
+      }
+    }
+  });
+  transaction();
+}
+
+export function getRssFeedById(userId: number, feedId: string): RssFeed | null {
+  const db = getUserDb(userId);
   const row = db
     .prepare("SELECT * FROM rss_feeds WHERE id = ?")
     .get(feedId) as RssFeed | undefined;

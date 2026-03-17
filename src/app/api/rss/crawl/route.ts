@@ -24,6 +24,7 @@ const EXTRACT_CONCURRENCY = 3;
  * Fail-open: extraction failures are silently ignored.
  */
 async function autoExtractEntries(
+  userId: number,
   entries: { id: string; alternate?: { href: string }[]; title?: string }[]
 ): Promise<number> {
   let extracted = 0;
@@ -43,7 +44,7 @@ async function autoExtractEntries(
 
         saveExtractedContent(url, data);
         if (data.textContent) {
-          updateFtsWithExtractedContent(url, data.textContent);
+          updateFtsWithExtractedContent(userId, url, data.textContent);
         }
         extracted++;
       })
@@ -53,7 +54,7 @@ async function autoExtractEntries(
   return extracted;
 }
 
-async function crawlFeed(feed: RssFeed): Promise<{ newEntries: number; extracted: number }> {
+async function crawlFeed(userId: number, feed: RssFeed): Promise<{ newEntries: number; extracted: number }> {
   const parsed = await fetchAndParseFeed(feed.feed_url);
   const entries = convertToFeedlyEntries(
     feed.id,
@@ -63,22 +64,22 @@ async function crawlFeed(feed: RssFeed): Promise<{ newEntries: number; extracted
   );
 
   // Get existing entries to determine which are new
-  const existingEntries = getCachedEntries(feed.id);
+  const existingEntries = getCachedEntries(userId, feed.id);
   const existingIds = new Set(
     (existingEntries || []).map((e) => (e as { id: string }).id)
   );
   const newItems = entries.filter((e) => !existingIds.has(e.id));
 
   // Cache all entries
-  cacheEntries(feed.id, entries);
+  cacheEntries(userId, feed.id, entries);
 
   // Add new entry count to unread counts
   if (newItems.length > 0) {
-    cacheUnreadCounts({ [feed.id]: newItems.length });
+    cacheUnreadCounts(userId, { [feed.id]: newItems.length });
   }
 
   // Update last fetched timestamp
-  updateRssFeedLastFetched(feed.id);
+  updateRssFeedLastFetched(userId, feed.id);
 
   // Auto-adjust polling interval based on average post frequency
   if (entries.length >= 2) {
@@ -96,12 +97,13 @@ async function crawlFeed(feed: RssFeed): Promise<{ newEntries: number; extracted
         intervals.reduce((a, b) => a + b, 0) / intervals.length;
       const avgIntervalMinutes = Math.round(avgIntervalMs / 1000 / 60);
 
-      updateRssFeedMeta(feed.id, { avgPostInterval: avgIntervalMinutes });
+      updateRssFeedMeta(userId, feed.id, { avgPostInterval: avgIntervalMinutes });
     }
   }
 
   // Auto-extract full text for new articles
   const extracted = await autoExtractEntries(
+    userId,
     newItems as { id: string; alternate?: { href: string }[]; title?: string }[]
   );
 
@@ -120,7 +122,7 @@ export async function POST(request: NextRequest) {
     // 特定フィードのみ or 全フィード
     let feeds: RssFeed[];
     if (targetFeedId) {
-      const feed = getRssFeedById(targetFeedId);
+      const feed = getRssFeedById(userId, targetFeedId);
       feeds = feed ? [feed] : [];
     } else {
       feeds = getRssFeeds(userId);
@@ -135,7 +137,7 @@ export async function POST(request: NextRequest) {
     for (let i = 0; i < feeds.length; i += CONCURRENCY) {
       const chunk = feeds.slice(i, i + CONCURRENCY);
       const results = await Promise.allSettled(
-        chunk.map((feed) => crawlFeed(feed))
+        chunk.map((feed) => crawlFeed(userId, feed))
       );
 
       for (let j = 0; j < results.length; j++) {
