@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireLogin } from "@/lib/api-auth";
 import { getPreference } from "@/lib/db";
-import { listModels } from "@/lib/ollama";
-
-const DEFAULT_OLLAMA_URL = "http://localhost:11434";
+import { listModels, DEFAULT_OLLAMA_URL } from "@/lib/ollama";
 
 export async function GET(request: NextRequest) {
   const auth = await requireLogin();

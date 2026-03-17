@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import { stripHtml } from "@/lib/html-strip";
+import type { ChatMessage } from "@/lib/ollama";
 
 interface AIPanelProps {
   articleContent: string;
@@ -10,17 +12,21 @@ interface AIPanelProps {
 
 type Tab = "summary" | "translate" | "chat";
 
-interface ChatMessage {
-  role: "user" | "assistant";
-  content: string;
-}
-
-function stripHtml(html: string): string {
-  return html.replace(/<[^>]*>/g, "").trim();
-}
-
 function stopPropagation(e: React.KeyboardEvent) {
   e.stopPropagation();
+}
+
+function LoadingSpinner({ text }: { text: string }) {
+  return (
+    <div className="flex items-center gap-2 text-gray-400">
+      <span className="inline-block w-4 h-4 border-2 border-orange-300 border-t-orange-500 rounded-full animate-spin" />
+      {text}
+    </div>
+  );
+}
+
+function StreamingCursor() {
+  return <span className="inline-block w-2 h-4 bg-orange-400 animate-pulse ml-0.5" />;
 }
 
 export default function AIPanel({
@@ -99,15 +105,15 @@ export default function AIPanel({
         (m: { name: string }) => m.name
       );
       setAvailableModels(names);
-      if (names.length > 0 && !model) {
-        setModel(names[0]);
+      if (names.length > 0) {
+        setModel(prev => prev || names[0]);
       }
     } catch {
       // ignore
     } finally {
       setModelsLoading(false);
     }
-  }, [model]);
+  }, []);
 
   useEffect(() => {
     fetchModels();
@@ -242,10 +248,11 @@ export default function AIPanel({
       apiMessages,
       (chunk) => {
         assistantText += chunk;
-        setChatMessages([
-          ...updatedMessages,
-          { role: "assistant", content: assistantText },
-        ]);
+        setChatMessages(prev => {
+          const newMessages = [...prev];
+          newMessages[newMessages.length - 1] = { role: "assistant", content: assistantText };
+          return newMessages;
+        });
       },
       () => {
         setChatLoading(false);
@@ -401,17 +408,12 @@ export default function AIPanel({
               </div>
             )}
             {summaryLoading && !summaryText && (
-              <div className="flex items-center gap-2 text-gray-400">
-                <span className="inline-block w-4 h-4 border-2 border-orange-300 border-t-orange-500 rounded-full animate-spin" />
-                要約を生成中...
-              </div>
+              <LoadingSpinner text="要約を生成中..." />
             )}
             {summaryText && (
               <div className="whitespace-pre-wrap text-gray-800">
                 {summaryText}
-                {summaryLoading && (
-                  <span className="inline-block w-2 h-4 bg-orange-400 animate-pulse ml-0.5" />
-                )}
+                {summaryLoading && <StreamingCursor />}
               </div>
             )}
           </div>
@@ -438,17 +440,12 @@ export default function AIPanel({
               </button>
             </div>
             {translateLoading && !translatedText && (
-              <div className="flex items-center gap-2 text-gray-400">
-                <span className="inline-block w-4 h-4 border-2 border-orange-300 border-t-orange-500 rounded-full animate-spin" />
-                翻訳中...
-              </div>
+              <LoadingSpinner text="翻訳中..." />
             )}
             {translatedText && (
               <div className="whitespace-pre-wrap text-gray-800">
                 {translatedText}
-                {translateLoading && (
-                  <span className="inline-block w-2 h-4 bg-orange-400 animate-pulse ml-0.5" />
-                )}
+                {translateLoading && <StreamingCursor />}
               </div>
             )}
           </div>
@@ -478,9 +475,7 @@ export default function AIPanel({
                     {msg.content}
                     {chatLoading &&
                       i === chatMessages.length - 1 &&
-                      msg.role === "assistant" && (
-                        <span className="inline-block w-2 h-4 bg-orange-400 animate-pulse ml-0.5" />
-                      )}
+                      msg.role === "assistant" && <StreamingCursor />}
                   </div>
                 </div>
               ))}
