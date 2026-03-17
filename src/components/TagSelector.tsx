@@ -17,6 +17,7 @@ interface TagSelectorProps {
 
 export default function TagSelector({ entryId, currentTags, onClose, onTagsChanged }: TagSelectorProps) {
   const [allTags, setAllTags] = useState<Tag[]>([]);
+  const [aiTags, setAiTags] = useState<{id: number; name: string}[]>([]);
   const [newTagName, setNewTagName] = useState("");
   const [loading, setLoading] = useState(true);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -31,6 +32,14 @@ export default function TagSelector({ entryId, currentTags, onClose, onTagsChang
       .then(tags => { setAllTags(tags); setLoading(false); })
       .catch(() => setLoading(false));
   }, []);
+
+  // AIタグ取得
+  useEffect(() => {
+    fetch(`/api/rss/tags/ai?entryId=${encodeURIComponent(entryId)}`)
+      .then(r => r.json())
+      .then(tags => { if (Array.isArray(tags)) setAiTags(tags); })
+      .catch(() => {});
+  }, [entryId]);
 
   // Escで閉じる
   useEffect(() => {
@@ -75,8 +84,32 @@ export default function TagSelector({ entryId, currentTags, onClose, onTagsChang
     }
   };
 
+  // AIタグをユーザータグとして追加
+  const addAiTagAsUserTag = async (tagName: string) => {
+    // 既存のユーザータグに同名があるか確認
+    const existing = allTags.find(t => t.name === tagName);
+    if (existing) {
+      await addTag(existing.id);
+      return;
+    }
+    // なければ新規作成
+    const res = await fetch("/api/rss/tags", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: tagName }),
+    });
+    const tag = await res.json();
+    if (tag.id) {
+      setAllTags(prev => [...prev, tag]);
+      await addTag(tag.id);
+    }
+  };
+
   const currentTagIds = new Set(currentTags.map(t => t.id));
   const availableTags = allTags.filter(t => !currentTagIds.has(t.id));
+  const aiRecommendations = aiTags.filter(
+    at => !allTags.some(ut => ut.name === at.name) && !currentTags.some(ct => ct.name === at.name)
+  );
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20" onClick={onClose}>
@@ -89,6 +122,18 @@ export default function TagSelector({ entryId, currentTags, onClose, onTagsChang
             {currentTags.map(tag => (
               <TagBadge key={tag.id} name={tag.name} color={tag.color} onRemove={() => removeTag(tag.id)} />
             ))}
+          </div>
+        )}
+
+        {/* AIおすすめタグ */}
+        {aiRecommendations.length > 0 && (
+          <div className="mb-3">
+            <p className="text-xs text-gray-500 mb-1">AIおすすめ</p>
+            <div className="flex flex-wrap gap-1">
+              {aiRecommendations.map(tag => (
+                <TagBadge key={tag.id} name={tag.name} isAi onClick={() => addAiTagAsUserTag(tag.name)} />
+              ))}
+            </div>
           </div>
         )}
 

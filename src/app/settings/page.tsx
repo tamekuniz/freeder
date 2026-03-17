@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { LogoWithText } from "@/components/Logo";
 
 export default function SettingsPage() {
@@ -209,7 +210,9 @@ export default function SettingsPage() {
       {/* Header */}
       <div className="bg-orange-500 px-6 py-4 flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <LogoWithText size={28} variant="white" />
+          <Link href="/" className="hover:opacity-80">
+            <LogoWithText size={28} variant="white" />
+          </Link>
           <span className="text-white/70 text-sm">/</span>
           <h1 className="text-white font-medium">設定</h1>
         </div>
@@ -217,7 +220,7 @@ export default function SettingsPage() {
           onClick={() => router.push("/")}
           className="px-4 py-1.5 bg-white/20 hover:bg-white/30 text-white rounded-md text-sm transition-colors"
         >
-          戻る &rarr;
+          &larr; 戻る
         </button>
       </div>
 
@@ -361,7 +364,7 @@ export default function SettingsPage() {
         <div className={sectionClass}>
           <h3 className="text-sm font-semibold text-gray-800 mb-3">AI設定</h3>
           <p className="text-xs text-gray-500 mb-4">
-            使用するAIプロバイダーのAPIキーを設定してください。環境変数でも設定可能です。
+            使用するAIプロバイダーのAPIキーを設定してください。
           </p>
           <div className="space-y-3">
             {/* Ollama */}
@@ -420,14 +423,14 @@ export default function SettingsPage() {
                 />
               </div>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center justify-end gap-2">
+              {aiMessage && <span className="text-sm text-green-600">{aiMessage}</span>}
               <button
                 onClick={handleSaveAI}
                 className="px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-md text-sm font-medium transition-colors"
               >
                 保存
               </button>
-              {aiMessage && <span className="text-sm text-green-600">{aiMessage}</span>}
             </div>
           </div>
         </div>
@@ -450,9 +453,11 @@ export default function SettingsPage() {
             </div>
             {pwError && <p className="text-red-500 text-sm">{pwError}</p>}
             {pwMessage && <p className="text-green-600 text-sm">{pwMessage}</p>}
-            <button type="submit" disabled={pwLoading} className="px-4 py-2 bg-orange-500 hover:bg-orange-600 disabled:opacity-50 text-white rounded-md text-sm font-medium transition-colors">
-              {pwLoading ? "..." : "パスワードを変更"}
-            </button>
+            <div className="flex justify-end">
+              <button type="submit" disabled={pwLoading} className="px-4 py-2 bg-orange-500 hover:bg-orange-600 disabled:opacity-50 text-white rounded-md text-sm font-medium transition-colors">
+                {pwLoading ? "..." : "パスワードを変更"}
+              </button>
+            </div>
           </form>
         </div>
       </div>
