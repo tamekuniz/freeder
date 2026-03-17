@@ -23,6 +23,7 @@ export default function Home() {
   const [feedIndex, setFeedIndex] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
   const [showUnreadOnly, setShowUnreadOnly] = useState(false);
   const [showStarredOnly, setShowStarredOnly] = useState(false);
   const [collapsedFolders, setCollapsedFolders] = useState<Record<string, boolean>>({});
@@ -128,7 +129,7 @@ export default function Home() {
         const isCached = subsRes.headers.get("X-Data-Source") === "cache"
           || countsRes.headers.get("X-Data-Source") === "cache";
         if (isCached) {
-          setError("Feedlyとの接続に失敗しました。キャッシュデータを表示中です。設定画面でトークンを再設定してください。");
+          setWarning("Feedlyとの接続に失敗しました。キャッシュデータを表示中です。設定画面でトークンを再設定してください。");
         }
 
         if (prefs["unread-only"] === "true") {
@@ -369,7 +370,7 @@ export default function Home() {
 
       // Detect cache fallback (Feedly API failed)
       if (streamRes.headers.get("X-Data-Source") === "cache" || countsRes.headers.get("X-Data-Source") === "cache") {
-        setError("Feedlyとの接続に失敗しました。キャッシュデータを表示中です。");
+        setWarning("Feedlyとの接続に失敗しました。キャッシュデータを表示中です。");
       }
 
       const data = await streamRes.json();
@@ -397,7 +398,7 @@ export default function Home() {
         });
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to refresh");
+      setWarning(err instanceof Error ? err.message : "リフレッシュに失敗しました");
     } finally {
       setSyncing(false);
     }
@@ -706,7 +707,25 @@ export default function Home() {
   }
 
   return (
-    <div className="flex h-screen overflow-hidden">
+    <div className="flex flex-col h-screen overflow-hidden">
+      {warning && (
+        <div className="flex items-center justify-between px-4 py-2 bg-orange-900/90 text-orange-200 text-sm flex-shrink-0">
+          <div className="flex items-center gap-2">
+            <span className="flex-shrink-0">&#9888;</span>
+            <span>{warning}</span>
+            <a href="/setup" className="underline text-orange-300 hover:text-orange-100 ml-2 flex-shrink-0">
+              トークンを再設定
+            </a>
+          </div>
+          <button
+            onClick={() => setWarning(null)}
+            className="text-orange-400 hover:text-orange-200 ml-4 flex-shrink-0"
+          >
+            &#10005;
+          </button>
+        </div>
+      )}
+      <div className="flex flex-1 min-h-0">
       <FeedSidebar
         subscriptions={subscriptions}
         selectedFeedId={selectedFeedId}
@@ -787,6 +806,7 @@ export default function Home() {
           fontSizeLevel={fontSizeLevel}
         />
       )}
+      </div>
     </div>
   );
 }

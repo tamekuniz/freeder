@@ -176,7 +176,31 @@ function SetupContent() {
           </div>
         )}
 
-        {/* Option 2: 自分のトークン（Proユーザー向け） */}
+        {/* Option 2: Feedlyでログイン（OAuth2） */}
+        <div className="bg-gray-700 rounded-md p-4 mb-5">
+          <p className="text-sm font-medium text-white mb-1">
+            Feedlyアカウントでログイン
+          </p>
+          <p className="text-xs text-gray-400 mb-3">
+            Feedlyで認証するとトークンが自動更新されるため、再設定が不要になります
+          </p>
+          <button
+            onClick={() => { window.location.href = "/api/auth/feedly"; }}
+            disabled={loading || oauthLoading}
+            className="w-full py-2.5 bg-[#2bb24c] hover:bg-[#249e42] disabled:opacity-50 text-white rounded-md font-medium transition-colors text-sm"
+          >
+            {oauthLoading ? "認証中..." : "Feedlyでログイン"}
+          </button>
+        </div>
+
+        {/* 区切り線 */}
+        <div className="flex items-center gap-3 mb-5">
+          <div className="flex-1 border-t border-gray-600" />
+          <span className="text-xs text-gray-500">または</span>
+          <div className="flex-1 border-t border-gray-600" />
+        </div>
+
+        {/* Option 3: 自分のトークン（Proユーザー向け） */}
         <div className="bg-gray-700 rounded-md p-4 mb-4">
           <p className="text-sm font-medium text-white mb-1">
             Feedly Pro を持っている場合
