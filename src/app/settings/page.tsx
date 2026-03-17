@@ -44,6 +44,11 @@ export default function SettingsPage() {
   const [geminiEnabled, setGeminiEnabled] = useState(false);
   const [aiMessage, setAiMessage] = useState("");
 
+  // Batch AI tagging state
+  const [batchTagging, setBatchTagging] = useState(false);
+  const [batchTagProgress, setBatchTagProgress] = useState(0);
+  const [batchTagResult, setBatchTagResult] = useState<string | null>(null);
+
   // Load user info, feeds, and preferences in parallel
   useEffect(() => {
     Promise.all([
@@ -196,6 +201,51 @@ export default function SettingsPage() {
       setTimeout(() => setAiMessage(""), 2000);
     } catch { setAiMessage("保存に失敗しました"); }
   }
+
+  // Batch AI tagging
+  const handleBatchTag = async () => {
+    setBatchTagging(true);
+    setBatchTagProgress(0);
+    setBatchTagResult(null);
+
+    let totalTagged = 0;
+    let totalErrors = 0;
+    let hasMore = true;
+
+    while (hasMore) {
+      try {
+        const res = await fetch("/api/rss/tags/ai/batch", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ limit: 20 }),
+        });
+        const data = await res.json();
+
+        if (data.error) {
+          setBatchTagResult(`エラー: ${data.error}`);
+          break;
+        }
+
+        totalTagged += data.tagged || 0;
+        totalErrors += data.errors || 0;
+        setBatchTagProgress(totalTagged);
+
+        // remaining が 0 or "more" でないなら終了
+        hasMore = data.remaining === "more";
+
+        // タグ付けできた記事が0件なら終了（無限ループ防止）
+        if ((data.tagged || 0) === 0) {
+          hasMore = false;
+        }
+      } catch {
+        setBatchTagResult("ネットワークエラー");
+        break;
+      }
+    }
+
+    setBatchTagging(false);
+    setBatchTagResult(`完了: ${totalTagged}件タグ付け${totalErrors > 0 ? `、${totalErrors}件エラー` : ""}`);
+  };
 
   // Bookmarklet
   const bookmarkletOrigin = typeof window !== "undefined" ? window.location.origin : "";
@@ -431,6 +481,25 @@ export default function SettingsPage() {
               >
                 保存
               </button>
+            </div>
+            {/* バッチAIタグ付け */}
+            <div className="mt-4 pt-4 border-t border-gray-200">
+              <h4 className="text-sm font-medium text-gray-700 mb-2">AIタグ付け</h4>
+              <p className="text-xs text-gray-500 mb-3">
+                既存の記事にAIタグを一括付与します。タグ付けにはOllamaの設定が必要です。
+              </p>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={handleBatchTag}
+                  disabled={batchTagging}
+                  className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50 text-sm"
+                >
+                  {batchTagging ? `タグ付け中... (${batchTagProgress}件完了)` : "既存記事にAIタグ付け"}
+                </button>
+                {batchTagResult && (
+                  <span className="text-sm text-gray-600">{batchTagResult}</span>
+                )}
+              </div>
             </div>
           </div>
         </div>
