@@ -110,27 +110,11 @@ export default function Home() {
           router.push("/login");
           return;
         }
-        if (!me.hasToken) {
-          router.push("/setup");
-          return;
-        }
         setUsername(me.username);
 
-        const [subsRes, countsRes, prefsRes] = await Promise.all([
-          fetch("/api/feedly/subscriptions"),
-          fetch("/api/feedly/markers"),
-          fetch("/api/preferences"),
-        ]);
-        const subs = await subsRes.json();
-        const counts = await countsRes.json();
+        // Fetch preferences first (always needed)
+        const prefsRes = await fetch("/api/preferences");
         const prefs = await prefsRes.json();
-
-        // Detect if data came from cache (Feedly API failed)
-        const isCached = subsRes.headers.get("X-Data-Source") === "cache"
-          || countsRes.headers.get("X-Data-Source") === "cache";
-        if (isCached) {
-          setWarning("Feedlyとの接続に失敗しました。キャッシュデータを表示中です。設定画面でトークンを再設定してください。");
-        }
 
         if (prefs["unread-only"] === "true") {
           setShowUnreadOnly(true);
@@ -145,20 +129,74 @@ export default function Home() {
           } catch { /* ignore parse errors */ }
         }
 
-        if (subs.error) throw new Error(subs.error);
+        // Fetch Feedly subscriptions (may fail if no token)
+        let feedlySubs: FeedlySubscription[] = [];
+        let countMap: Record<string, number> = {};
+        let feedlyWarning: string | null = null;
+        if (me.hasToken) {
+          try {
+            const [subsRes, countsRes] = await Promise.all([
+              fetch("/api/feedly/subscriptions"),
+              fetch("/api/feedly/markers"),
+            ]);
+            const subs = await subsRes.json();
+            const counts = await countsRes.json();
 
-        setSubscriptions(Array.isArray(subs) ? subs : []);
+            // Detect if data came from cache (Feedly API failed)
+            const isCached = subsRes.headers.get("X-Data-Source") === "cache"
+              || countsRes.headers.get("X-Data-Source") === "cache";
+            if (isCached) {
+              feedlyWarning = "Feedlyとの接続に失敗しました。キャッシュデータを表示中です。設定画面でトークンを再設定してください。";
+            }
 
-        const countMap: Record<string, number> = {};
-        if (counts.unreadcounts) {
-          for (const c of counts.unreadcounts) {
-            countMap[c.id] = c.count;
+            if (!subs.error) {
+              feedlySubs = Array.isArray(subs) ? subs : [];
+            }
+
+            if (counts.unreadcounts) {
+              for (const c of counts.unreadcounts) {
+                countMap[c.id] = c.count;
+              }
+            }
+          } catch {
+            feedlyWarning = "Feedlyとの接続に失敗しました。RSSフィードのみ表示しています。";
           }
         }
+
+        // Fetch RSS feeds
+        let rssSubs: FeedlySubscription[] = [];
+        try {
+          const rssRes = await fetch("/api/rss/feeds");
+          if (rssRes.ok) {
+            const rssFeeds = await rssRes.json();
+            rssSubs = rssFeeds.map((f: { id: string; title?: string; feed_url: string; site_url?: string; category?: string; unread_count?: number }) => ({
+              id: f.id,
+              title: f.title || f.feed_url,
+              website: f.site_url || "",
+              categories: [{ id: `rss-cat:${f.category || "RSS"}`, label: f.category || "RSS" }],
+            }));
+            // Merge RSS unread counts
+            for (const f of rssFeeds) {
+              if (f.unread_count != null) {
+                countMap[f.id] = f.unread_count;
+              }
+            }
+          }
+        } catch { /* RSS fetch failed, continue with Feedly only */ }
+
+        // Merge subscriptions
+        setSubscriptions([...feedlySubs, ...rssSubs]);
         setUnreadCounts(countMap);
 
+        if (feedlyWarning) {
+          setWarning(feedlyWarning);
+        }
+
         // Background crawl all feeds for search index
-        fetch("/api/feedly/crawl", { method: "POST" }).catch(() => {});
+        Promise.all([
+          me.hasToken ? fetch("/api/feedly/crawl", { method: "POST" }).catch(() => {}) : Promise.resolve(),
+          fetch("/api/rss/crawl", { method: "POST" }).catch(() => {}),
+        ]);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load");
       } finally {
@@ -174,12 +212,18 @@ export default function Home() {
 
     async function loadEntries() {
       try {
-        const params = new URLSearchParams({
-          streamId: selectedFeedId!,
-          count: "50",
-        });
-        if (showUnreadOnly) params.set("unreadOnly", "true");
-        const res = await fetch(`/api/feedly/streams?${params}`);
+        const isRss = selectedFeedId!.startsWith("rss:");
+        const url = isRss
+          ? `/api/rss/streams?streamId=${encodeURIComponent(selectedFeedId!)}`
+          : (() => {
+              const params = new URLSearchParams({
+                streamId: selectedFeedId!,
+                count: "50",
+              });
+              if (showUnreadOnly) params.set("unreadOnly", "true");
+              return `/api/feedly/streams?${params}`;
+            })();
+        const res = await fetch(url);
         const data = await res.json();
         if (data.error) throw new Error(data.error);
         const items = data.items || [];
@@ -208,17 +252,19 @@ export default function Home() {
           [feedId]: Math.max(0, (prev[feedId] || 0) - 1),
         }));
       }
-      // Send to Feedly + update local cache
-      fetch("/api/feedly/markers", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "markAsRead",
-          entryIds: [entry.id],
-          feedId: entry.origin?.streamId,
-        }),
-        keepalive: true,
-      }).catch(() => {});
+      // Send to Feedly + update local cache (skip for RSS entries)
+      if (!entry.id.startsWith("rss:entry:")) {
+        fetch("/api/feedly/markers", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "markAsRead",
+            entryIds: [entry.id],
+            feedId: entry.origin?.streamId,
+          }),
+          keepalive: true,
+        }).catch(() => {});
+      }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedIndex]);
@@ -295,12 +341,14 @@ export default function Home() {
   const handleToggleUnread = useCallback(
     (entry: FeedlyEntry) => {
       const action = entry.unread ? "markAsRead" : "keepUnread";
-      fetch("/api/feedly/markers", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action, entryIds: [entry.id], feedId: entry.origin?.streamId }),
-        keepalive: true,
-      });
+      if (!entry.id.startsWith("rss:entry:")) {
+        fetch("/api/feedly/markers", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action, entryIds: [entry.id], feedId: entry.origin?.streamId }),
+          keepalive: true,
+        });
+      }
       setEntries((prev) =>
         prev.map((e) =>
           e.id === entry.id ? { ...e, unread: !e.unread } : e
@@ -322,18 +370,20 @@ export default function Home() {
   const handleToggleStar = useCallback(
     (entry: FeedlyEntry) => {
       const isStarred = entry.tags?.some((t) => t.id.includes("global.saved"));
-      if (isStarred) {
-        fetch("/api/feedly/tags", {
-          method: "DELETE",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ entryId: entry.id }),
-        });
-      } else {
-        fetch("/api/feedly/tags", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ entryId: entry.id }),
-        });
+      if (!entry.id.startsWith("rss:entry:")) {
+        if (isStarred) {
+          fetch("/api/feedly/tags", {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ entryId: entry.id }),
+          });
+        } else {
+          fetch("/api/feedly/tags", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ entryId: entry.id }),
+          });
+        }
       }
       setEntries((prev) =>
         prev.map((e) => {
@@ -363,39 +413,53 @@ export default function Home() {
     if (!selectedFeedId) return;
     setSyncing(true);
     try {
-      const [streamRes, countsRes] = await Promise.all([
-        fetch(`/api/feedly/streams?streamId=${encodeURIComponent(selectedFeedId)}&count=50${showUnreadOnly ? "&unreadOnly=true" : ""}`),
-        fetch("/api/feedly/markers"),
-      ]);
+      const isRss = selectedFeedId.startsWith("rss:");
 
-      // Detect cache fallback (Feedly API failed)
-      if (streamRes.headers.get("X-Data-Source") === "cache" || countsRes.headers.get("X-Data-Source") === "cache") {
-        setWarning("Feedlyとの接続に失敗しました。キャッシュデータを表示中です。");
-      }
+      if (isRss) {
+        // RSS: crawl then reload stream
+        await fetch("/api/rss/crawl", { method: "POST" }).catch(() => {});
+        const streamRes = await fetch(`/api/rss/streams?streamId=${encodeURIComponent(selectedFeedId)}`);
+        const data = await streamRes.json();
+        if (data.error) throw new Error(data.error);
+        const items = data.items || [];
+        setEntries(showUnreadOnly ? items.filter((e: FeedlyEntry) => e.unread) : items);
+        setSelectedIndex(-1);
+      } else {
+        // Feedly: existing refresh logic
+        const [streamRes, countsRes] = await Promise.all([
+          fetch(`/api/feedly/streams?streamId=${encodeURIComponent(selectedFeedId)}&count=50${showUnreadOnly ? "&unreadOnly=true" : ""}`),
+          fetch("/api/feedly/markers"),
+        ]);
 
-      const data = await streamRes.json();
-      if (data.error) throw new Error(data.error);
-      const items = data.items || [];
-      setEntries(showUnreadOnly ? items.filter((e: FeedlyEntry) => e.unread) : items);
-      setSelectedIndex(-1);
+        // Detect cache fallback (Feedly API failed)
+        if (streamRes.headers.get("X-Data-Source") === "cache" || countsRes.headers.get("X-Data-Source") === "cache") {
+          setWarning("Feedlyとの接続に失敗しました。キャッシュデータを表示中です。");
+        }
 
-      const counts = await countsRes.json();
-      if (counts.unreadcounts) {
-        // Merge with client state: keep the minimum count per feed
-        // (client may have optimistically decremented but server hasn't caught up)
-        setUnreadCounts((prev) => {
-          const merged: Record<string, number> = {};
-          for (const c of counts.unreadcounts) {
-            const clientCount = prev[c.id];
-            merged[c.id] = clientCount != null
-              ? Math.min(clientCount, c.count) : c.count;
-          }
-          // Preserve client-side entries not in server response
-          for (const id of Object.keys(prev)) {
-            if (!(id in merged)) merged[id] = prev[id];
-          }
-          return merged;
-        });
+        const data = await streamRes.json();
+        if (data.error) throw new Error(data.error);
+        const items = data.items || [];
+        setEntries(showUnreadOnly ? items.filter((e: FeedlyEntry) => e.unread) : items);
+        setSelectedIndex(-1);
+
+        const counts = await countsRes.json();
+        if (counts.unreadcounts) {
+          // Merge with client state: keep the minimum count per feed
+          // (client may have optimistically decremented but server hasn't caught up)
+          setUnreadCounts((prev) => {
+            const merged: Record<string, number> = {};
+            for (const c of counts.unreadcounts) {
+              const clientCount = prev[c.id];
+              merged[c.id] = clientCount != null
+                ? Math.min(clientCount, c.count) : c.count;
+            }
+            // Preserve client-side entries not in server response
+            for (const id of Object.keys(prev)) {
+              if (!(id in merged)) merged[id] = prev[id];
+            }
+            return merged;
+          });
+        }
       }
     } catch (err) {
       setWarning(err instanceof Error ? err.message : "リフレッシュに失敗しました");
@@ -428,11 +492,15 @@ export default function Home() {
         const feedTitle = subscriptions.find((s) => s.id === selectedFeedId)?.title || "このフィード";
         if (!window.confirm(`「${feedTitle}」の未読 ${unreadEntries.length} 件をすべて既読にしますか？`)) return;
         const entryIds = unreadEntries.map((en) => en.id);
-        fetch("/api/feedly/markers", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "markAsRead", entryIds }),
-        });
+        // Only send Feedly API call for non-RSS entries
+        const feedlyEntryIds = entryIds.filter((id) => !id.startsWith("rss:entry:"));
+        if (feedlyEntryIds.length > 0) {
+          fetch("/api/feedly/markers", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "markAsRead", entryIds: feedlyEntryIds }),
+          });
+        }
         setEntries((prev) => prev.map((en) => ({ ...en, unread: false })));
         // Update sidebar unread count
         if (selectedFeedId) {

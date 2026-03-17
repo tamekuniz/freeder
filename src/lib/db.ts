@@ -1,5 +1,6 @@
 import Database from "better-sqlite3";
 import path from "path";
+import crypto from "crypto";
 import { stripHtml } from "./html-strip";
 
 const DB_PATH = path.join(process.cwd(), "freeder-cache.db");
@@ -65,6 +66,20 @@ function initTables(db: Database.Database) {
       text_content TEXT,
       excerpt TEXT,
       extracted_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    CREATE TABLE IF NOT EXISTS rss_feeds (
+      id TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      feed_url TEXT NOT NULL,
+      title TEXT,
+      site_url TEXT,
+      category TEXT DEFAULT 'RSS',
+      last_fetched_at INTEGER,
+      poll_interval INTEGER DEFAULT 3600,
+      avg_post_interval INTEGER,
+      created_at INTEGER DEFAULT (unixepoch()),
+      UNIQUE(user_id, feed_url)
     );
   `);
 
@@ -518,4 +533,110 @@ export function migratePreferencesToUser(userId: number): void {
       "INSERT OR IGNORE INTO cache_meta (key, value, user_id, updated_at) VALUES (?, ?, ?, unixepoch())"
     ).run(r.key, r.value, userId);
   }
+}
+
+// --- RSS Feeds ---
+
+export interface RssFeed {
+  id: string;
+  user_id: number;
+  feed_url: string;
+  title: string | null;
+  site_url: string | null;
+  category: string;
+  last_fetched_at: number | null;
+  poll_interval: number;
+  avg_post_interval: number | null;
+  created_at: number;
+}
+
+function rssFeedId(userId: number, feedUrl: string): string {
+  const hash = crypto
+    .createHash("sha256")
+    .update(feedUrl)
+    .digest("hex")
+    .slice(0, 12);
+  return `rss:${userId}:${hash}`;
+}
+
+export function addRssFeed(
+  userId: number,
+  feedUrl: string,
+  title: string,
+  siteUrl?: string,
+  category?: string
+): string {
+  const db = getDb();
+  const id = rssFeedId(userId, feedUrl);
+  db.prepare(
+    `INSERT OR REPLACE INTO rss_feeds (id, user_id, feed_url, title, site_url, category)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(id, userId, feedUrl, title, siteUrl || null, category || "RSS");
+  return id;
+}
+
+export function getRssFeeds(userId: number): RssFeed[] {
+  const db = getDb();
+  return db
+    .prepare("SELECT * FROM rss_feeds WHERE user_id = ? ORDER BY created_at")
+    .all(userId) as RssFeed[];
+}
+
+export function deleteRssFeed(userId: number, feedId: string): boolean {
+  const db = getDb();
+  const result = db
+    .prepare("DELETE FROM rss_feeds WHERE id = ? AND user_id = ?")
+    .run(feedId, userId);
+  return result.changes > 0;
+}
+
+export function updateRssFeedMeta(
+  feedId: string,
+  title?: string,
+  category?: string,
+  pollInterval?: number,
+  avgPostInterval?: number
+): void {
+  const db = getDb();
+  const sets: string[] = [];
+  const params: unknown[] = [];
+
+  if (title !== undefined) {
+    sets.push("title = ?");
+    params.push(title);
+  }
+  if (category !== undefined) {
+    sets.push("category = ?");
+    params.push(category);
+  }
+  if (pollInterval !== undefined) {
+    sets.push("poll_interval = ?");
+    params.push(pollInterval);
+  }
+  if (avgPostInterval !== undefined) {
+    sets.push("avg_post_interval = ?");
+    params.push(avgPostInterval);
+  }
+
+  if (sets.length === 0) return;
+
+  params.push(feedId);
+  db.prepare(`UPDATE rss_feeds SET ${sets.join(", ")} WHERE id = ?`).run(
+    ...params
+  );
+}
+
+export function updateRssFeedLastFetched(feedId: string): void {
+  const db = getDb();
+  db.prepare(
+    "UPDATE rss_feeds SET last_fetched_at = unixepoch() WHERE id = ?"
+  ).run(feedId);
+}
+
+export function getRssFeedById(feedId: string): RssFeed | null {
+  const db = getDb();
+  const row = db
+    .prepare("SELECT * FROM rss_feeds WHERE id = ?")
+    .get(feedId) as RssFeed | undefined;
+  return row ?? null;
 }
