@@ -1,16 +1,20 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useState, useEffect } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { LogoWithText } from "@/components/Logo";
 
-export default function SetupPage() {
+function SetupContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [token, setToken] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [hasToken, setHasToken] = useState(false);
   const [hasEnvToken, setHasEnvToken] = useState(false);
+
+  // Pick up OAuth error from URL params
+  const oauthError = searchParams.get("error");
 
   useEffect(() => {
     fetch("/api/auth/token")
@@ -82,6 +86,14 @@ export default function SetupPage() {
           Feedly トークンの設定
         </h2>
 
+        {oauthError && (
+          <div className="bg-red-500/20 border border-red-500/50 rounded-md p-3 mb-4">
+            <p className="text-red-400 text-sm">
+              Feedly認証エラー: {oauthError}
+            </p>
+          </div>
+        )}
+
         {hasToken && (
           <p className="text-orange-400 text-sm mb-4">
             トークンは設定済みです。新しいトークンで上書きもできます。
@@ -89,6 +101,27 @@ export default function SetupPage() {
         )}
 
         {error && <p className="text-red-400 text-sm mb-4">{error}</p>}
+
+        {/* Option 0: Feedlyアカウントでログイン（OAuth2） */}
+        <div className="bg-gray-800/80 rounded-lg p-6 mb-5">
+          <h2 className="text-lg font-semibold text-white mb-1">Feedlyアカウントでログイン</h2>
+          <p className="text-gray-400 text-sm mb-4">
+            Feedlyアカウントで認証して、自動的にトークンを取得します
+          </p>
+          <a
+            href="/api/auth/feedly"
+            className="block w-full text-center bg-orange-500 hover:bg-orange-600 text-white py-3 rounded-lg font-medium transition-colors"
+          >
+            Feedlyでログイン
+          </a>
+        </div>
+
+        {/* 区切り線 */}
+        <div className="flex items-center gap-3 mb-5">
+          <div className="flex-1 border-t border-gray-600" />
+          <span className="text-xs text-gray-500">または</span>
+          <div className="flex-1 border-t border-gray-600" />
+        </div>
 
         {/* Option 1: サーバー共有トークン（Proなしユーザー向け） */}
         {hasEnvToken && (
@@ -175,5 +208,13 @@ export default function SetupPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function SetupPage() {
+  return (
+    <Suspense>
+      <SetupContent />
+    </Suspense>
   );
 }

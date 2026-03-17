@@ -32,6 +32,25 @@ export async function requireAuth(): Promise<AuthContext | NextResponse> {
   };
 }
 
+// Auth check that provides userId for feedly functions (with auto-refresh support)
+export async function requireAuthUserId(): Promise<{ userId: number; username: string } | NextResponse> {
+  const session = await getIronSession<SessionData>(
+    await cookies(),
+    sessionOptions
+  );
+  if (!session.userId) {
+    return NextResponse.json({ error: "login required" }, { status: 401 });
+  }
+  const token = getFeedlyToken(session.userId);
+  if (!token) {
+    return NextResponse.json(
+      { error: "feedly token not configured" },
+      { status: 403 }
+    );
+  }
+  return { userId: session.userId, username: session.username! };
+}
+
 // Auth check without requiring Feedly token (for /api/auth/me etc.)
 export async function requireLogin(): Promise<
   { userId: number; username: string } | NextResponse

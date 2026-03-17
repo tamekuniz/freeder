@@ -1,20 +1,20 @@
 import { NextResponse } from "next/server";
 import { getSubscriptions, getStream } from "@/lib/feedly";
 import { cacheEntries } from "@/lib/db";
-import { requireAuth } from "@/lib/api-auth";
+import { requireAuthUserId } from "@/lib/api-auth";
 
 export async function POST() {
-  const auth = await requireAuth();
+  const auth = await requireAuthUserId();
   if (auth instanceof NextResponse) return auth;
 
   try {
-    const subscriptions = await getSubscriptions(auth.feedlyToken);
+    const subscriptions = await getSubscriptions(auth.userId);
     let totalCached = 0;
     let feedsDone = 0;
 
     for (const sub of subscriptions) {
       try {
-        const stream = await getStream(auth.feedlyToken, sub.id, { count: 50 });
+        const stream = await getStream(auth.userId, sub.id, { count: 50 });
         if (stream.items && stream.items.length > 0) {
           cacheEntries(sub.id, stream.items);
           totalCached += stream.items.length;

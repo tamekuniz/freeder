@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getStream } from "@/lib/feedly";
 import { cacheEntries, getCachedEntries } from "@/lib/db";
-import { requireAuth } from "@/lib/api-auth";
+import { requireAuthUserId } from "@/lib/api-auth";
 
 export async function GET(request: NextRequest) {
-  const auth = await requireAuth();
+  const auth = await requireAuthUserId();
   if (auth instanceof NextResponse) return auth;
 
   const { searchParams } = request.nextUrl;
@@ -21,7 +21,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const stream = await getStream(auth.feedlyToken, streamId, {
+    const stream = await getStream(auth.userId, streamId, {
       count: count ? Number(count) : 20,
       unreadOnly: unreadOnly === "true",
       continuation: continuation || undefined,

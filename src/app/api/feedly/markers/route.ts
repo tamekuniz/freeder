@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { markAsRead, keepUnread, getUnreadCounts } from "@/lib/feedly";
 import { cacheUnreadCounts, getCachedUnreadCounts } from "@/lib/db";
-import { requireAuth } from "@/lib/api-auth";
+import { requireAuthUserId } from "@/lib/api-auth";
 
 export async function GET() {
-  const auth = await requireAuth();
+  const auth = await requireAuthUserId();
   if (auth instanceof NextResponse) return auth;
 
   try {
-    const counts = await getUnreadCounts(auth.feedlyToken);
+    const counts = await getUnreadCounts(auth.userId);
     if (counts.unreadcounts) {
       const countMap: Record<string, number> = {};
       for (const c of counts.unreadcounts) {
@@ -33,7 +33,7 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
-  const auth = await requireAuth();
+  const auth = await requireAuthUserId();
   if (auth instanceof NextResponse) return auth;
 
   try {
@@ -48,9 +48,9 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === "markAsRead") {
-      await markAsRead(auth.feedlyToken, entryIds);
+      await markAsRead(auth.userId, entryIds);
     } else if (action === "keepUnread") {
-      await keepUnread(auth.feedlyToken, entryIds);
+      await keepUnread(auth.userId, entryIds);
     } else {
       return NextResponse.json(
         { error: "action must be 'markAsRead' or 'keepUnread'" },

@@ -80,6 +80,16 @@ function initTables(db: Database.Database) {
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_cache_meta_user_key ON cache_meta(COALESCE(user_id, 0), key)"
   );
 
+  // Add refresh_token and expires_at columns if they don't exist
+  const columns = db.prepare("PRAGMA table_info(user_feedly_tokens)").all() as { name: string }[];
+  const columnNames = columns.map(c => c.name);
+  if (!columnNames.includes("refresh_token")) {
+    db.exec("ALTER TABLE user_feedly_tokens ADD COLUMN refresh_token TEXT");
+  }
+  if (!columnNames.includes("expires_at")) {
+    db.exec("ALTER TABLE user_feedly_tokens ADD COLUMN expires_at INTEGER");
+  }
+
   // FTS5 full-text search table for entries (trigram tokenizer for CJK support)
   // Check if FTS table exists and uses correct tokenizer; recreate if needed
   const ftsExists = db
@@ -445,6 +455,29 @@ export function getAllPreferences(
     result[r.key] = r.value;
   }
   return result;
+}
+
+// --- Feedly Tokens (full, with refresh) ---
+
+export interface FeedlyTokenFull {
+  access_token: string;
+  refresh_token: string | null;
+  expires_at: number | null;
+}
+
+export function getFeedlyTokenFull(userId: number): FeedlyTokenFull | null {
+  const db = getDb();
+  return db.prepare("SELECT access_token, refresh_token, expires_at FROM user_feedly_tokens WHERE user_id = ?").get(userId) as FeedlyTokenFull | null;
+}
+
+export function setFeedlyTokenWithRefresh(userId: number, accessToken: string, refreshToken: string | null, expiresIn: number | null): void {
+  const db = getDb();
+  const expiresAt = expiresIn ? Math.floor(Date.now() / 1000) + expiresIn : null;
+  db.prepare(
+    `INSERT INTO user_feedly_tokens (user_id, access_token, refresh_token, expires_at, updated_at)
+     VALUES (?, ?, ?, ?, unixepoch())
+     ON CONFLICT(user_id) DO UPDATE SET access_token = ?, refresh_token = ?, expires_at = ?, updated_at = unixepoch()`
+  ).run(userId, accessToken, refreshToken, expiresAt, accessToken, refreshToken, expiresAt);
 }
 
 // Migrate shared preferences to a user (for first user registration)

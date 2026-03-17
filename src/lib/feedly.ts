@@ -1,10 +1,45 @@
+import { getFeedlyTokenFull, setFeedlyTokenWithRefresh } from "./db";
+
 const FEEDLY_BASE_URL = "https://cloud.feedly.com";
 
+// Token is about to expire if less than 5 minutes remain
+const TOKEN_REFRESH_BUFFER = 5 * 60;
+
+async function getValidToken(userId: number): Promise<string> {
+  const tokenData = getFeedlyTokenFull(userId);
+  if (!tokenData) {
+    throw new Error("No Feedly token found");
+  }
+
+  // Check if token needs refresh
+  if (tokenData.refresh_token && tokenData.expires_at) {
+    const now = Math.floor(Date.now() / 1000);
+    if (now >= tokenData.expires_at - TOKEN_REFRESH_BUFFER) {
+      // Token expired or about to expire, refresh it
+      const newTokens = await refreshAccessToken(tokenData.refresh_token);
+      setFeedlyTokenWithRefresh(
+        userId,
+        newTokens.access_token,
+        newTokens.refresh_token,
+        newTokens.expires_in
+      );
+      return newTokens.access_token;
+    }
+  }
+
+  return tokenData.access_token;
+}
+
 async function feedlyFetch(
-  token: string,
+  tokenOrUserId: string | number,
   path: string,
   options: RequestInit = {}
 ) {
+  const token =
+    typeof tokenOrUserId === "number"
+      ? await getValidToken(tokenOrUserId)
+      : tokenOrUserId;
+
   const res = await fetch(`${FEEDLY_BASE_URL}${path}`, {
     ...options,
     headers: {
@@ -53,13 +88,13 @@ export interface FeedlyStream {
 }
 
 export async function getSubscriptions(
-  token: string
+  tokenOrUserId: string | number
 ): Promise<FeedlySubscription[]> {
-  return feedlyFetch(token, "/v3/subscriptions");
+  return feedlyFetch(tokenOrUserId, "/v3/subscriptions");
 }
 
 export async function getStream(
-  token: string,
+  tokenOrUserId: string | number,
   streamId: string,
   options: {
     count?: number;
@@ -73,22 +108,22 @@ export async function getStream(
   if (options.unreadOnly) params.set("unreadOnly", "true");
   if (options.continuation) params.set("continuation", options.continuation);
 
-  return feedlyFetch(token, `/v3/streams/contents?${params.toString()}`);
+  return feedlyFetch(tokenOrUserId, `/v3/streams/contents?${params.toString()}`);
 }
 
 export async function getUnreadCounts(
-  token: string
+  tokenOrUserId: string | number
 ): Promise<{
   unreadcounts: { id: string; count: number; updated: number }[];
 }> {
-  return feedlyFetch(token, "/v3/markers/counts");
+  return feedlyFetch(tokenOrUserId, "/v3/markers/counts");
 }
 
 export async function markAsRead(
-  token: string,
+  tokenOrUserId: string | number,
   entryIds: string[]
 ): Promise<void> {
-  await feedlyFetch(token, "/v3/markers", {
+  await feedlyFetch(tokenOrUserId, "/v3/markers", {
     method: "POST",
     body: JSON.stringify({
       action: "markAsRead",
@@ -99,10 +134,10 @@ export async function markAsRead(
 }
 
 export async function keepUnread(
-  token: string,
+  tokenOrUserId: string | number,
   entryIds: string[]
 ): Promise<void> {
-  await feedlyFetch(token, "/v3/markers", {
+  await feedlyFetch(tokenOrUserId, "/v3/markers", {
     method: "POST",
     body: JSON.stringify({
       action: "keepUnread",
@@ -113,21 +148,21 @@ export async function keepUnread(
 }
 
 export async function starEntry(
-  token: string,
+  tokenOrUserId: string | number,
   entryId: string
 ): Promise<void> {
-  await feedlyFetch(token, "/v3/tags/global.saved", {
+  await feedlyFetch(tokenOrUserId, "/v3/tags/global.saved", {
     method: "PUT",
     body: JSON.stringify({ entryId }),
   });
 }
 
 export async function unstarEntry(
-  token: string,
+  tokenOrUserId: string | number,
   entryId: string
 ): Promise<void> {
   await feedlyFetch(
-    token,
+    tokenOrUserId,
     `/v3/tags/global.saved/${encodeURIComponent(entryId)}`,
     {
       method: "DELETE",
@@ -137,10 +172,10 @@ export async function unstarEntry(
 
 // Validate a token by fetching user profile
 export async function validateToken(
-  token: string
+  tokenOrUserId: string | number
 ): Promise<{ valid: boolean; error?: string }> {
   try {
-    await feedlyFetch(token, "/v3/profile");
+    await feedlyFetch(tokenOrUserId, "/v3/profile");
     return { valid: true };
   } catch (e) {
     return {
@@ -148,4 +183,66 @@ export async function validateToken(
       error: e instanceof Error ? e.message : "Invalid token",
     };
   }
+}
+
+// --- OAuth2 Configuration ---
+
+const FEEDLY_CLIENT_ID = process.env.FEEDLY_CLIENT_ID || "feedlydev";
+const FEEDLY_CLIENT_SECRET = process.env.FEEDLY_CLIENT_SECRET || "feedlydev";
+const FEEDLY_REDIRECT_URI = process.env.FEEDLY_REDIRECT_URI || "http://localhost:3001/api/auth/feedly/callback";
+
+export interface TokenResponse {
+  access_token: string;
+  refresh_token: string;
+  expires_in: number;
+  token_type: string;
+  id: string;
+}
+
+export function getAuthorizationUrl(state: string): string {
+  const params = new URLSearchParams({
+    client_id: FEEDLY_CLIENT_ID,
+    redirect_uri: FEEDLY_REDIRECT_URI,
+    response_type: "code",
+    scope: "https://cloud.feedly.com/subscriptions",
+    state,
+  });
+  return `${FEEDLY_BASE_URL}/v3/auth/auth?${params.toString()}`;
+}
+
+export async function exchangeCode(code: string): Promise<TokenResponse> {
+  const res = await fetch(`${FEEDLY_BASE_URL}/v3/auth/token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      code,
+      client_id: FEEDLY_CLIENT_ID,
+      client_secret: FEEDLY_CLIENT_SECRET,
+      redirect_uri: FEEDLY_REDIRECT_URI,
+      grant_type: "authorization_code",
+    }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Token exchange failed: ${res.status} ${text}`);
+  }
+  return res.json();
+}
+
+export async function refreshAccessToken(refreshToken: string): Promise<TokenResponse> {
+  const res = await fetch(`${FEEDLY_BASE_URL}/v3/auth/token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      refresh_token: refreshToken,
+      client_id: FEEDLY_CLIENT_ID,
+      client_secret: FEEDLY_CLIENT_SECRET,
+      grant_type: "refresh_token",
+    }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Token refresh failed: ${res.status} ${text}`);
+  }
+  return res.json();
 }
