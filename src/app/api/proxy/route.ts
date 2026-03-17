@@ -25,11 +25,12 @@ export async function GET(request: NextRequest) {
     });
 
     const contentType = res.headers.get("content-type") || "text/html";
-    let body: Buffer | string = Buffer.from(await res.arrayBuffer());
+    const rawBytes = await res.arrayBuffer();
+    let body: BodyInit = new Uint8Array(rawBytes);
 
     // For HTML responses, inject <base> tag and fetch/XHR override script
     if (contentType.includes("text/html")) {
-      let html = body.toString("utf-8");
+      let html = new TextDecoder("utf-8").decode(rawBytes);
 
       // Script to override fetch/XHR so relative URLs resolve to original domain
       const overrideScript = `<script>

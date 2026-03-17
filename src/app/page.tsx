@@ -31,6 +31,11 @@ export default function Home() {
   const [detailOverride, setDetailOverride] = useState<FeedlyEntry | null>(null);
   const [syncing, setSyncing] = useState(false);
 
+  // Full-text extraction state
+  const [extractedContent, setExtractedContent] = useState<string | null>(null);
+  const [extracting, setExtracting] = useState(false);
+  const [extractError, setExtractError] = useState<string | null>(null);
+
   // Compute feed order matching sidebar visual display (with duplicates for multi-category feeds)
   type SortedFeedItem = { sub: FeedlySubscription; category: string };
   const sortedFeeds = useMemo((): SortedFeedItem[] => {
@@ -190,6 +195,71 @@ export default function Home() {
     if (!entry) return;
     if (sitePreviewEntry) setSitePreviewEntry(entry);
   }, [selectedIndex, entries]);
+
+  // Auto-extract full text when article only has summary
+  const currentEntry = detailOverride || entries[selectedIndex] || null;
+  const currentEntryId = currentEntry?.id ?? null;
+
+  useEffect(() => {
+    setExtractedContent(null);
+    setExtracting(false);
+    setExtractError(null);
+
+    if (!currentEntry) return;
+    // If content field exists, no need to extract
+    if (currentEntry.content?.content) return;
+
+    const url = currentEntry.alternate?.[0]?.href;
+    if (!url) return;
+
+    let cancelled = false;
+    setExtracting(true);
+
+    fetch(`/api/extract?url=${encodeURIComponent(url)}`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (cancelled) return;
+        if (data.error) {
+          setExtractError(data.error);
+        } else {
+          setExtractedContent(data.content);
+        }
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setExtractError(err instanceof Error ? err.message : "Extraction failed");
+      })
+      .finally(() => {
+        if (!cancelled) setExtracting(false);
+      });
+
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentEntryId]);
+
+  // Manual extraction trigger
+  const handleExtractFullText = useCallback(() => {
+    if (!currentEntry) return;
+    const url = currentEntry.alternate?.[0]?.href;
+    if (!url) return;
+
+    setExtracting(true);
+    setExtractError(null);
+
+    fetch(`/api/extract?url=${encodeURIComponent(url)}`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.error) {
+          setExtractError(data.error);
+        } else {
+          setExtractedContent(data.content);
+        }
+      })
+      .catch((err) => {
+        setExtractError(err instanceof Error ? err.message : "Extraction failed");
+      })
+      .finally(() => setExtracting(false));
+  }, [currentEntry]);
 
   const handleToggleUnread = useCallback(
     (entry: FeedlyEntry) => {
@@ -567,6 +637,10 @@ export default function Home() {
         <ArticleDetail
           entry={selectedEntry}
           fontSizeLevel={fontSizeLevel}
+          extractedContent={extractedContent}
+          extracting={extracting}
+          extractError={extractError}
+          onExtractFullText={handleExtractFullText}
         />
         <KeyboardHint />
       </div>

@@ -57,6 +57,15 @@ function initTables(db: Database.Database) {
       access_token TEXT NOT NULL,
       updated_at INTEGER NOT NULL DEFAULT (unixepoch())
     );
+
+    CREATE TABLE IF NOT EXISTS extracted_content (
+      url TEXT PRIMARY KEY,
+      title TEXT,
+      content TEXT NOT NULL,
+      text_content TEXT,
+      excerpt TEXT,
+      extracted_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
   `);
 
   // Migration: add user_id column to cache_meta for per-user preferences
@@ -337,6 +346,43 @@ export function getFeedlyToken(userId: number): string | null {
     )
     .get(userId) as { access_token: string } | undefined;
   return row?.access_token ?? null;
+}
+
+// --- Extracted Content ---
+
+export interface ExtractedContent {
+  title: string | null;
+  content: string;
+  textContent: string | null;
+  excerpt: string | null;
+}
+
+export function getExtractedContent(url: string): ExtractedContent | null {
+  const db = getDb();
+  const row = db
+    .prepare(
+      "SELECT title, content, text_content, excerpt FROM extracted_content WHERE url = ?"
+    )
+    .get(url) as
+    | { title: string | null; content: string; text_content: string | null; excerpt: string | null }
+    | undefined;
+  if (!row) return null;
+  return {
+    title: row.title,
+    content: row.content,
+    textContent: row.text_content,
+    excerpt: row.excerpt,
+  };
+}
+
+export function saveExtractedContent(
+  url: string,
+  data: ExtractedContent
+): void {
+  const db = getDb();
+  db.prepare(
+    "INSERT OR REPLACE INTO extracted_content (url, title, content, text_content, excerpt, extracted_at) VALUES (?, ?, ?, ?, ?, unixepoch())"
+  ).run(url, data.title, data.content, data.textContent, data.excerpt);
 }
 
 // --- UI Preferences (cache_meta, per-user) ---

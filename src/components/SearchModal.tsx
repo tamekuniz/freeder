@@ -31,7 +31,7 @@ export default function SearchModal({ onClose, onSelectEntry, streamIds, scopeLa
   const [loading, setLoading] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const resultsRef = useRef<HTMLDivElement>(null);
-  const debounceRef = useRef<NodeJS.Timeout>();
+  const debounceRef = useRef<NodeJS.Timeout>(undefined);
 
   // Auto-focus the input
   useEffect(() => {
