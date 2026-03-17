@@ -592,30 +592,27 @@ export function deleteRssFeed(userId: number, feedId: string): boolean {
 
 export function updateRssFeedMeta(
   feedId: string,
-  title?: string,
-  category?: string,
-  pollInterval?: number,
-  avgPostInterval?: number
+  opts: { title?: string; category?: string; pollInterval?: number; avgPostInterval?: number }
 ): void {
   const db = getDb();
   const sets: string[] = [];
   const params: unknown[] = [];
 
-  if (title !== undefined) {
+  if (opts.title !== undefined) {
     sets.push("title = ?");
-    params.push(title);
+    params.push(opts.title);
   }
-  if (category !== undefined) {
+  if (opts.category !== undefined) {
     sets.push("category = ?");
-    params.push(category);
+    params.push(opts.category);
   }
-  if (pollInterval !== undefined) {
+  if (opts.pollInterval !== undefined) {
     sets.push("poll_interval = ?");
-    params.push(pollInterval);
+    params.push(opts.pollInterval);
   }
-  if (avgPostInterval !== undefined) {
+  if (opts.avgPostInterval !== undefined) {
     sets.push("avg_post_interval = ?");
-    params.push(avgPostInterval);
+    params.push(opts.avgPostInterval);
   }
 
   if (sets.length === 0) return;
@@ -631,6 +628,31 @@ export function updateRssFeedLastFetched(feedId: string): void {
   db.prepare(
     "UPDATE rss_feeds SET last_fetched_at = unixepoch() WHERE id = ?"
   ).run(feedId);
+}
+
+// --- Entry Star ---
+
+export function setEntryStarred(entryId: string, starred: boolean): void {
+  const db = getDb();
+  const row = db
+    .prepare("SELECT data FROM entries WHERE id = ?")
+    .get(entryId) as { data: string } | undefined;
+  if (!row) return;
+
+  const entry = JSON.parse(row.data);
+  const savedTag = { id: "user/global.saved", label: "Saved" };
+
+  if (starred) {
+    const hasSaved = entry.tags?.some((t: { id: string }) => t.id.includes("global.saved"));
+    if (!hasSaved) {
+      entry.tags = [...(entry.tags || []), savedTag];
+    }
+  } else {
+    entry.tags = (entry.tags || []).filter((t: { id: string }) => !t.id.includes("global.saved"));
+  }
+
+  db.prepare("UPDATE entries SET data = ?, updated_at = unixepoch() WHERE id = ?")
+    .run(JSON.stringify(entry), entryId);
 }
 
 export function getRssFeedById(feedId: string): RssFeed | null {

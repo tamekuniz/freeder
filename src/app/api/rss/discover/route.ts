@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireLogin } from "@/lib/api-auth";
-import { discoverFeedUrl, discoverFeedUrlAdvanced } from "@/lib/rss";
+import { resolveRssFeed } from "@/lib/rss";
 
 export async function POST(request: NextRequest) {
   try {
@@ -17,26 +17,11 @@ export async function POST(request: NextRequest) {
 
     const feeds: { url: string; title?: string }[] = [];
 
-    // Try standard discovery first
     try {
-      const discovered = await discoverFeedUrl(url);
-      if (discovered) {
-        feeds.push({ url: discovered });
-      }
+      const resolved = await resolveRssFeed(url);
+      feeds.push({ url: resolved.feedUrl, title: resolved.title || undefined });
     } catch {
-      // Ignore errors from standard discovery
-    }
-
-    // If nothing found, try advanced discovery
-    if (feeds.length === 0) {
-      try {
-        const discoveredAdvanced = await discoverFeedUrlAdvanced(url);
-        if (discoveredAdvanced) {
-          feeds.push({ url: discoveredAdvanced });
-        }
-      } catch {
-        // Ignore errors from advanced discovery
-      }
+      // No feed found — return empty list
     }
 
     return NextResponse.json({ feeds });

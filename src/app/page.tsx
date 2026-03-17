@@ -349,8 +349,12 @@ export default function Home() {
     if (!selectedFeedId) return;
     setSyncing(true);
     try {
-      // Crawl then reload stream
-      await fetch("/api/rss/crawl", { method: "POST" }).catch(() => {});
+      // Crawl only the selected feed, then reload stream
+      await fetch("/api/rss/crawl", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ feedId: selectedFeedId }),
+      }).catch(() => {});
       const streamRes = await fetch(`/api/rss/streams?streamId=${encodeURIComponent(selectedFeedId)}`);
       const data = await streamRes.json();
       if (data.error) throw new Error(data.error);

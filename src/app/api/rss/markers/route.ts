@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireLogin } from "@/lib/api-auth";
-import { decrementUnreadCount, incrementUnreadCount } from "@/lib/db";
+import { decrementUnreadCount, incrementUnreadCount, setEntryStarred } from "@/lib/db";
 
 export async function POST(request: NextRequest) {
   const auth = await requireLogin();
@@ -19,6 +19,14 @@ export async function POST(request: NextRequest) {
         decrementUnreadCount(feedId, entryIds.length);
       } else if (action === "keepUnread") {
         incrementUnreadCount(feedId, entryIds.length);
+      }
+    }
+
+    // スター/アンスターはエントリのtagsフィールドを更新
+    if (action === "star" || action === "unstar") {
+      const starred = action === "star";
+      for (const entryId of entryIds) {
+        setEntryStarred(entryId, starred);
       }
     }
 

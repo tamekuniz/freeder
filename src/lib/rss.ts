@@ -24,6 +24,9 @@ interface RssItem {
   isoDate?: string;
 }
 
+const RSS_ACCEPT =
+  "application/rss+xml, application/atom+xml, application/xml, text/xml, */*;q=0.1";
+
 // --- Helpers ---
 
 function sha256(input: string): string {
@@ -37,8 +40,7 @@ const parser = new Parser({
   headers: {
     "User-Agent":
       "Mozilla/5.0 (compatible; Freeder/1.0; +https://github.com/freeder)",
-    Accept:
-      "application/rss+xml, application/atom+xml, application/xml, text/xml, */*;q=0.1",
+    Accept: RSS_ACCEPT,
   },
 });
 
@@ -50,8 +52,7 @@ export async function fetchAndParseFeed(
 ): Promise<{ title: string; siteUrl: string; items: RssItem[] }> {
   const res = await fetchAsBot(feedUrl, {
     headers: {
-      Accept:
-        "application/rss+xml, application/atom+xml, application/xml, text/xml, */*;q=0.1",
+      Accept: RSS_ACCEPT,
     },
   });
 
@@ -265,8 +266,7 @@ export async function discoverFeedUrlAdvanced(
     try {
       const res = await fetchAsBot(candidateUrl, {
         headers: {
-          Accept:
-            "application/rss+xml, application/atom+xml, application/xml, text/xml",
+          Accept: RSS_ACCEPT,
         },
       });
 
@@ -293,4 +293,48 @@ export async function discoverFeedUrlAdvanced(
   }
 
   return null;
+}
+
+/**
+ * URLを受け取り、RSSフィードを解決する。
+ * 1. 直接RSSフィードとしてパース試行
+ * 2. HTMLからlink tagで検出
+ * 3. common pathsで検出
+ */
+export async function resolveRssFeed(url: string): Promise<{
+  feedUrl: string;
+  title: string | null;
+  siteUrl: string | null;
+}> {
+  // Step 1: Try to parse URL directly as an RSS feed
+  try {
+    const parsed = await fetchAndParseFeed(url);
+    return { feedUrl: url, title: parsed.title, siteUrl: parsed.siteUrl || null };
+  } catch {
+    // Not a direct feed — continue to discovery
+  }
+
+  // Step 2: Discover via <link> tags in HTML
+  const discovered = await discoverFeedUrl(url);
+  if (discovered) {
+    try {
+      const parsed = await fetchAndParseFeed(discovered);
+      return { feedUrl: discovered, title: parsed.title, siteUrl: parsed.siteUrl || null };
+    } catch {
+      // Found a link but couldn't parse it — continue
+    }
+  }
+
+  // Step 3: Try common feed paths
+  const discoveredAdvanced = await discoverFeedUrlAdvanced(url);
+  if (discoveredAdvanced) {
+    try {
+      const parsed = await fetchAndParseFeed(discoveredAdvanced);
+      return { feedUrl: discoveredAdvanced, title: parsed.title, siteUrl: parsed.siteUrl || null };
+    } catch {
+      // Found a candidate but couldn't parse it
+    }
+  }
+
+  throw new Error(`Could not find RSS feed for: ${url}`);
 }

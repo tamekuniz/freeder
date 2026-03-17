@@ -5,11 +5,7 @@ import {
   addRssFeed,
   deleteRssFeed,
 } from "@/lib/db";
-import {
-  fetchAndParseFeed,
-  discoverFeedUrl,
-  discoverFeedUrlAdvanced,
-} from "@/lib/rss";
+import { resolveRssFeed } from "@/lib/rss";
 
 export async function GET() {
   try {
@@ -42,54 +38,18 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Try to parse the URL directly as an RSS feed
-    let feedUrl = url;
-    let feedTitle = title;
-
+    let resolved;
     try {
-      const parsed = await fetchAndParseFeed(url);
-      feedUrl = url;
-      if (!feedTitle) feedTitle = parsed.title;
+      resolved = await resolveRssFeed(url);
     } catch {
-      // Not a direct feed URL — try to discover the feed
-      try {
-        const discovered = await discoverFeedUrl(url);
-        if (discovered) {
-          feedUrl = discovered;
-          if (!feedTitle) {
-            try {
-              const parsed = await fetchAndParseFeed(feedUrl);
-              feedTitle = parsed.title;
-            } catch {
-              // Use URL as fallback title
-            }
-          }
-        } else {
-          throw new Error("No feed found");
-        }
-      } catch {
-        // Try advanced discovery as last resort
-        const discoveredAdvanced = await discoverFeedUrlAdvanced(url);
-        if (discoveredAdvanced) {
-          feedUrl = discoveredAdvanced;
-          if (!feedTitle) {
-            try {
-              const parsed = await fetchAndParseFeed(feedUrl);
-              feedTitle = parsed.title;
-            } catch {
-              // Use URL as fallback title
-            }
-          }
-        } else {
-          return NextResponse.json(
-            { error: "Could not find RSS feed for the given URL" },
-            { status: 404 }
-          );
-        }
-      }
+      return NextResponse.json(
+        { error: "Could not find RSS feed for the given URL" },
+        { status: 404 }
+      );
     }
 
-    if (!feedTitle) feedTitle = feedUrl;
+    const feedUrl = resolved.feedUrl;
+    const feedTitle = title || resolved.title || feedUrl;
 
     const feed = await addRssFeed(userId, feedUrl, feedTitle, category);
     return NextResponse.json(feed, { status: 201 });
