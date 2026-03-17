@@ -74,7 +74,7 @@ export function LogoWithText({
     <div className={`flex items-center gap-2 ${className}`}>
       <Logo size={size} variant={variant} />
       <span
-        className="font-bold text-white tracking-tight"
+        className={`font-bold tracking-tight ${variant === "white" ? "text-white" : "text-gray-800"}`}
         style={{ fontSize }}
       >
         freeder

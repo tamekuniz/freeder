@@ -8,13 +8,52 @@ import {
   cacheUnreadCounts,
   updateRssFeedLastFetched,
   updateRssFeedMeta,
+  getExtractedContent,
+  saveExtractedContent,
+  updateFtsWithExtractedContent,
 } from "@/lib/db";
 import type { RssFeed } from "@/lib/db";
 import { fetchAndParseFeed, convertToFeedlyEntries } from "@/lib/rss";
+import { extractArticle } from "@/lib/extract";
 
 const CONCURRENCY = 5;
+const EXTRACT_CONCURRENCY = 3;
 
-async function crawlFeed(feed: RssFeed): Promise<{ newEntries: number }> {
+/**
+ * Auto-extract full text for new articles.
+ * Fail-open: extraction failures are silently ignored.
+ */
+async function autoExtractEntries(
+  entries: { id: string; alternate?: { href: string }[]; title?: string }[]
+): Promise<number> {
+  let extracted = 0;
+
+  for (let i = 0; i < entries.length; i += EXTRACT_CONCURRENCY) {
+    const chunk = entries.slice(i, i + EXTRACT_CONCURRENCY);
+    await Promise.allSettled(
+      chunk.map(async (entry) => {
+        const url = entry.alternate?.[0]?.href;
+        if (!url) return;
+
+        // Skip if already extracted
+        if (getExtractedContent(url)) return;
+
+        const data = await extractArticle(url);
+        if (!data) return;
+
+        saveExtractedContent(url, data);
+        if (data.textContent) {
+          updateFtsWithExtractedContent(url, data.textContent);
+        }
+        extracted++;
+      })
+    );
+  }
+
+  return extracted;
+}
+
+async function crawlFeed(feed: RssFeed): Promise<{ newEntries: number; extracted: number }> {
   const parsed = await fetchAndParseFeed(feed.feed_url);
   const entries = convertToFeedlyEntries(
     feed.id,
@@ -61,7 +100,12 @@ async function crawlFeed(feed: RssFeed): Promise<{ newEntries: number }> {
     }
   }
 
-  return { newEntries: newItems.length };
+  // Auto-extract full text for new articles
+  const extracted = await autoExtractEntries(
+    newItems as { id: string; alternate?: { href: string }[]; title?: string }[]
+  );
+
+  return { newEntries: newItems.length, extracted };
 }
 
 export async function POST(request: NextRequest) {
@@ -84,6 +128,7 @@ export async function POST(request: NextRequest) {
 
     let crawled = 0;
     let newEntries = 0;
+    let totalExtracted = 0;
     const errors: string[] = [];
 
     // フィードを CONCURRENCY 個ずつのチャンクに分けて並列処理
@@ -98,6 +143,7 @@ export async function POST(request: NextRequest) {
         if (result.status === "fulfilled") {
           crawled++;
           newEntries += result.value.newEntries;
+          totalExtracted += result.value.extracted;
         } else {
           const message =
             result.reason instanceof Error
@@ -108,7 +154,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    return NextResponse.json({ crawled, errors, newEntries });
+    return NextResponse.json({ crawled, errors, newEntries, extracted: totalExtracted });
   } catch (error) {
     console.error("POST /api/rss/crawl error:", error);
     return NextResponse.json(

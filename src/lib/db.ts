@@ -199,6 +199,19 @@ export function cacheEntries(streamId: string, entries: unknown[]): void {
     "INSERT INTO entries_fts (entry_id, title, content, feed_title) VALUES (?, ?, ?, ?)"
   );
 
+  // Batch-load existing entries to preserve read status and tags (avoids N+1 SELECTs)
+  const entryIds = entries.map(e => (e as { id: string }).id);
+  const existingMap = new Map<string, { unread?: boolean; tags?: unknown[] }>();
+  if (entryIds.length > 0) {
+    const placeholders = entryIds.map(() => "?").join(",");
+    const rows = db.prepare(`SELECT id, data FROM entries WHERE id IN (${placeholders})`)
+      .all(...entryIds) as { id: string; data: string }[];
+    for (const row of rows) {
+      const old = JSON.parse(row.data);
+      existingMap.set(row.id, { unread: old.unread, tags: old.tags });
+    }
+  }
+
   const tx = db.transaction(() => {
     for (const entry of entries) {
       const e = entry as {
@@ -208,6 +221,13 @@ export function cacheEntries(streamId: string, entries: unknown[]): void {
         summary?: { content: string };
         origin?: { title?: string };
       };
+
+      // Preserve read status and tags from existing entry
+      const existing = existingMap.get(e.id);
+      if (existing) {
+        if (existing.unread === false) (entry as Record<string, unknown>).unread = false;
+        if (existing.tags?.length) (entry as Record<string, unknown>).tags = existing.tags;
+      }
 
       // Upsert the entry (no DELETE — articles accumulate permanently)
       upsert.run(e.id, streamId, JSON.stringify(entry));
@@ -360,6 +380,29 @@ export function getUserByUsername(
   return row ?? null;
 }
 
+export function getUserById(
+  id: number
+): { id: number; username: string; password_hash: string } | null {
+  const db = getDb();
+  const row = db
+    .prepare("SELECT id, username, password_hash FROM users WHERE id = ?")
+    .get(id) as
+    | { id: number; username: string; password_hash: string }
+    | undefined;
+  return row ?? null;
+}
+
+export function updateUserPassword(
+  userId: number,
+  newPasswordHash: string
+): void {
+  const db = getDb();
+  db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(
+    newPasswordHash,
+    userId
+  );
+}
+
 export function getUserCount(): number {
   const db = getDb();
   const row = db.prepare("SELECT COUNT(*) as c FROM users").get() as {
@@ -422,6 +465,43 @@ export function saveExtractedContent(
   db.prepare(
     "INSERT OR REPLACE INTO extracted_content (url, title, content, text_content, excerpt, extracted_at) VALUES (?, ?, ?, ?, ?, unixepoch())"
   ).run(url, data.title, data.content, data.textContent, data.excerpt);
+}
+
+/**
+ * Update the FTS index for entries matching the given URL with richer extracted text.
+ * Looks up entry IDs by matching alternate[].href in the entry JSON data,
+ * then replaces the FTS content with the extracted full text.
+ */
+export function updateFtsWithExtractedContent(
+  url: string,
+  extractedText: string
+): void {
+  const db = getDb();
+
+  // Find all entries whose alternate URL matches
+  const rows = db
+    .prepare("SELECT id, data FROM entries WHERE data LIKE ?")
+    .all(`%${url.replace(/%/g, "\\%")}%`) as { id: string; data: string }[];
+
+  const deleteFts = db.prepare("DELETE FROM entries_fts WHERE entry_id = ?");
+  const insertFts = db.prepare(
+    "INSERT INTO entries_fts (entry_id, title, content, feed_title) VALUES (?, ?, ?, ?)"
+  );
+
+  const tx = db.transaction(() => {
+    for (const row of rows) {
+      const entry = JSON.parse(row.data);
+      // Verify this entry actually has a matching alternate URL
+      const alternates = entry.alternate as { href: string }[] | undefined;
+      if (!alternates?.some((a: { href: string }) => a.href === url)) continue;
+
+      const title = entry.title || "";
+      const feedTitle = entry.origin?.title || "";
+      deleteFts.run(row.id);
+      insertFts.run(row.id, title, extractedText, feedTitle);
+    }
+  });
+  tx();
 }
 
 // --- UI Preferences (cache_meta, per-user) ---
@@ -575,11 +655,17 @@ export function addRssFeed(
   return id;
 }
 
-export function getRssFeeds(userId: number): RssFeed[] {
+export function getRssFeeds(userId: number): (RssFeed & { unread_count: number })[] {
   const db = getDb();
   return db
-    .prepare("SELECT * FROM rss_feeds WHERE user_id = ? ORDER BY created_at")
-    .all(userId) as RssFeed[];
+    .prepare(
+      `SELECT rf.*, COALESCE(uc.count, 0) as unread_count
+       FROM rss_feeds rf
+       LEFT JOIN unread_counts uc ON uc.id = rf.id
+       WHERE rf.user_id = ?
+       ORDER BY rf.created_at`
+    )
+    .all(userId) as (RssFeed & { unread_count: number })[];
 }
 
 export function deleteRssFeed(userId: number, feedId: string): boolean {
@@ -630,29 +716,41 @@ export function updateRssFeedLastFetched(feedId: string): void {
   ).run(feedId);
 }
 
-// --- Entry Star ---
+// --- Entry Data Patch ---
 
-export function setEntryStarred(entryId: string, starred: boolean): void {
+function patchEntryData(entryId: string, mutate: (entry: Record<string, unknown>) => void): void {
   const db = getDb();
-  const row = db
-    .prepare("SELECT data FROM entries WHERE id = ?")
+  const row = db.prepare("SELECT data FROM entries WHERE id = ?")
     .get(entryId) as { data: string } | undefined;
   if (!row) return;
-
   const entry = JSON.parse(row.data);
-  const savedTag = { id: "user/global.saved", label: "Saved" };
-
-  if (starred) {
-    const hasSaved = entry.tags?.some((t: { id: string }) => t.id.includes("global.saved"));
-    if (!hasSaved) {
-      entry.tags = [...(entry.tags || []), savedTag];
-    }
-  } else {
-    entry.tags = (entry.tags || []).filter((t: { id: string }) => !t.id.includes("global.saved"));
-  }
-
+  mutate(entry);
   db.prepare("UPDATE entries SET data = ?, updated_at = unixepoch() WHERE id = ?")
     .run(JSON.stringify(entry), entryId);
+}
+
+export function setEntryReadStatus(entryIds: string[], unread: boolean): void {
+  const db = getDb();
+  const tx = db.transaction(() => {
+    for (const entryId of entryIds) {
+      patchEntryData(entryId, (entry) => { entry.unread = unread; });
+    }
+  });
+  tx();
+}
+
+export function setEntryStarred(entryId: string, starred: boolean): void {
+  const savedTag = { id: "user/global.saved", label: "Saved" };
+  patchEntryData(entryId, (entry) => {
+    const tags = (entry.tags || []) as { id: string }[];
+    if (starred) {
+      if (!tags.some(t => t.id.includes("global.saved"))) {
+        entry.tags = [...tags, savedTag];
+      }
+    } else {
+      entry.tags = tags.filter(t => !t.id.includes("global.saved"));
+    }
+  });
 }
 
 export function getRssFeedById(feedId: string): RssFeed | null {

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireLogin } from "@/lib/api-auth";
-import { decrementUnreadCount, incrementUnreadCount, setEntryStarred } from "@/lib/db";
+import { decrementUnreadCount, incrementUnreadCount, setEntryStarred, setEntryReadStatus } from "@/lib/db";
 
 export async function POST(request: NextRequest) {
   const auth = await requireLogin();
@@ -13,13 +13,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Invalid request" }, { status: 400 });
     }
 
-    // RSSエントリの既読/未読はローカルDBのunread_countsのみで管理
-    if (feedId) {
-      if (action === "markAsRead") {
-        decrementUnreadCount(feedId, entryIds.length);
-      } else if (action === "keepUnread") {
-        incrementUnreadCount(feedId, entryIds.length);
-      }
+    // RSSエントリの既読/未読をエントリデータとunread_countsの両方で管理
+    if (action === "markAsRead") {
+      setEntryReadStatus(entryIds, false);
+      if (feedId) decrementUnreadCount(feedId, entryIds.length);
+    } else if (action === "keepUnread") {
+      setEntryReadStatus(entryIds, true);
+      if (feedId) incrementUnreadCount(feedId, entryIds.length);
     }
 
     // スター/アンスターはエントリのtagsフィールドを更新

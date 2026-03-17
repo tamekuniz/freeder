@@ -10,7 +10,6 @@ const shortcuts = [
   { key: "/", label: "検索" },
   { key: "f", label: "フォルダ内検索" },
   { key: "b", label: "ブラウザで開く" },
-  { key: "e / E", label: "全文取得 / 強制再取得" },
   { key: "v", label: "サイトプレビュー" },
   { key: "m", label: "既読/未読切替" },
   { key: "u", label: "未読フィルタ切替" },
@@ -36,16 +35,16 @@ export default function KeyboardHint() {
 
       {show && (
         <div
-          className="absolute bottom-full right-0 mb-0 bg-gray-800 text-gray-200 rounded-lg shadow-xl p-3 min-w-[240px] z-50"
+          className="absolute bottom-full right-0 mb-0 bg-orange-500 text-white rounded-lg shadow-xl p-3 min-w-[240px] z-50"
           onMouseEnter={() => setShow(true)}
           onMouseLeave={() => setShow(false)}
         >
-          <div className="text-xs font-semibold text-gray-400 mb-2">キーボードショートカット</div>
+          <div className="text-xs font-semibold text-white mb-2">キーボードショートカット</div>
           <div className="space-y-1">
             {shortcuts.map(({ key, label }) => (
               <div key={key} className="flex items-center justify-between text-xs gap-4">
-                <span className="text-gray-300">{label}</span>
-                <kbd className="px-1.5 py-0.5 bg-gray-700 border border-gray-600 rounded text-[10px] font-mono text-gray-300 whitespace-nowrap">
+                <span className="text-white">{label}</span>
+                <kbd className="px-1.5 py-0.5 bg-orange-600 border border-white/30 rounded text-[10px] font-mono text-white whitespace-nowrap">
                   {key}
                 </kbd>
               </div>

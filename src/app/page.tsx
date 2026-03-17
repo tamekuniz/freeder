@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { FeedlyEntry, FeedlySubscription } from "@/lib/feedly";
+import { stripHtml } from "@/lib/html-strip";
 import FeedSidebar from "@/components/FeedSidebar";
 import ArticleList from "@/components/ArticleList";
 import ArticleDetail, { type ArticleDetailHandle } from "@/components/ArticleDetail";
@@ -20,6 +21,8 @@ export default function Home() {
   const [entries, setEntries] = useState<FeedlyEntry[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [selectedFeedId, setSelectedFeedId] = useState<string | null>(null);
+  const [selectedFolderFeedIds, setSelectedFolderFeedIds] = useState<string[] | null>(null);
+  const [selectedFolderLabel, setSelectedFolderLabel] = useState<string | null>(null);
   const [feedIndex, setFeedIndex] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -34,8 +37,9 @@ export default function Home() {
   const [detailOverride, setDetailOverride] = useState<FeedlyEntry | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [showAIPanel, setShowAIPanel] = useState(false);
-  const [sidebarWidth, setSidebarWidth] = useState(240);
-  const [listWidth, setListWidth] = useState(512);
+  const [initialCrawlStatus, setInitialCrawlStatus] = useState<string | null>(null);
+  const [feedPaneWidth, setFeedPaneWidth] = useState(280);
+  const [articleListWidth, setArticleListWidth] = useState(512);
   const articleDetailRef = useRef<ArticleDetailHandle>(null);
 
   // Full-text extraction state
@@ -43,7 +47,16 @@ export default function Home() {
   const [extracting, setExtracting] = useState(false);
   const [extractError, setExtractError] = useState<string | null>(null);
 
-  // Compute feed order matching sidebar visual display (with duplicates for multi-category feeds)
+  // Translation state
+  const [showTranslateMenu, setShowTranslateMenu] = useState(false);
+  const [translateMenuPos, setTranslateMenuPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [translating, setTranslating] = useState(false);
+  const [translatedContent, setTranslatedContent] = useState<string | null>(null);
+
+  // Article text search state
+  const [articleSearchQuery, setArticleSearchQuery] = useState("");
+
+  // Compute feed order matching feed pane display (with duplicates for multi-category feeds)
   type SortedFeedItem = { sub: FeedlySubscription; category: string };
   const sortedFeeds = useMemo((): SortedFeedItem[] => {
     const filteredSubs = showUnreadOnly
@@ -75,7 +88,7 @@ export default function Home() {
       return a.localeCompare(b);
     });
 
-    // Flatten into ordered list matching sidebar visual order (duplicates preserved)
+    // Flatten into ordered list matching feed pane order (duplicates preserved)
     const result: SortedFeedItem[] = [];
     for (const key of sortedKeys) {
       const subs = [...catMap.get(key)!];
@@ -112,13 +125,14 @@ export default function Home() {
         }
         setUsername(me.username);
 
-        // Fetch preferences first (always needed)
-        const prefsRes = await fetch("/api/preferences");
-        const prefs = await prefsRes.json();
+        // Fetch preferences and RSS feeds in parallel
+        const [prefsRes, rssRes] = await Promise.all([
+          fetch("/api/preferences"),
+          fetch("/api/rss/feeds"),
+        ]);
 
-        if (prefs["unread-only"] === "true") {
-          setShowUnreadOnly(true);
-        }
+        // Apply preferences
+        const prefs = await prefsRes.json();
         if (prefs["font-size-level"]) {
           const level = parseInt(prefs["font-size-level"], 10);
           if (level >= 0 && level <= 4) setFontSizeLevel(level);
@@ -129,31 +143,45 @@ export default function Home() {
           } catch { /* ignore parse errors */ }
         }
 
-        // Fetch RSS feeds
+        // Apply RSS feeds
         const countMap: Record<string, number> = {};
-        try {
-          const rssRes = await fetch("/api/rss/feeds");
-          if (rssRes.ok) {
-            const rssFeeds = await rssRes.json();
-            const rssSubs: FeedlySubscription[] = rssFeeds.map((f: { id: string; title?: string; feed_url: string; site_url?: string; category?: string; unread_count?: number }) => ({
-              id: f.id,
-              title: f.title || f.feed_url,
-              website: f.site_url || "",
-              categories: [{ id: `rss-cat:${f.category || "RSS"}`, label: f.category || "RSS" }],
-            }));
-            for (const f of rssFeeds) {
-              if (f.unread_count != null) {
-                countMap[f.id] = f.unread_count;
-              }
+        if (rssRes.ok) {
+          const rssFeeds = await rssRes.json();
+          const rssSubs: FeedlySubscription[] = rssFeeds.map((f: { id: string; title?: string; feed_url: string; site_url?: string; category?: string; unread_count?: number }) => ({
+            id: f.id,
+            title: f.title || f.feed_url,
+            website: f.site_url || "",
+            categories: [{ id: `rss-cat:${f.category || "RSS"}`, label: f.category || "RSS" }],
+          }));
+          for (const f of rssFeeds) {
+            if (f.unread_count != null) {
+              countMap[f.id] = f.unread_count;
             }
-            setSubscriptions(rssSubs);
           }
-        } catch { /* RSS fetch failed */ }
+          setSubscriptions(rssSubs);
 
+          // Initial crawl if user has feeds but no cached entries yet
+          if (rssFeeds.length > 0 && Object.keys(countMap).length === 0) {
+            setInitialCrawlStatus("登録されたフィードのアーティクルを取得しています......");
+            fetch("/api/rss/crawl", { method: "POST" }).then(async (crawlRes) => {
+              const crawlData = await crawlRes.json();
+              setInitialCrawlStatus(
+                `${crawlData.crawled || 0}件のフィードから${crawlData.newEntries || 0}件の記事を取得しました\nフルテキストを取得中......`
+              );
+              const refreshRes = await fetch("/api/rss/feeds");
+              if (refreshRes.ok) {
+                const refreshed = await refreshRes.json();
+                const newCounts: Record<string, number> = {};
+                for (const f of refreshed) {
+                  if (f.unread_count != null) newCounts[f.id] = f.unread_count;
+                }
+                setUnreadCounts(newCounts);
+              }
+              setInitialCrawlStatus(null);
+            }).catch(() => setInitialCrawlStatus(null));
+          }
+        }
         setUnreadCounts(countMap);
-
-        // Background crawl all feeds for search index
-        fetch("/api/rss/crawl", { method: "POST" }).catch(() => {});
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load");
       } finally {
@@ -183,18 +211,18 @@ export default function Home() {
     return () => clearInterval(interval);
   }, []);
 
-  // Load entries when feed changes (SQLite fallback handled server-side)
+  // Load entries when feed or folder changes
   useEffect(() => {
-    if (!selectedFeedId) return;
+    const feedIds = selectedFolderFeedIds || (selectedFeedId ? [selectedFeedId] : null);
+    if (!feedIds || feedIds.length === 0) return;
 
     async function loadEntries() {
       try {
-        const url = `/api/rss/streams?streamId=${encodeURIComponent(selectedFeedId!)}`;
-        const res = await fetch(url);
+        const params = feedIds!.map(id => `streamId=${encodeURIComponent(id)}`).join("&");
+        const res = await fetch(`/api/rss/streams?${params}`);
         const data = await res.json();
         if (data.error) throw new Error(data.error);
         const items = data.items || [];
-        // Client-side filter as safety net when unread-only mode
         setEntries(showUnreadOnly ? items.filter((e: FeedlyEntry) => e.unread) : items);
         setSelectedIndex(-1);
       } catch {
@@ -202,7 +230,7 @@ export default function Home() {
       }
     }
     loadEntries();
-  }, [selectedFeedId, showUnreadOnly]);
+  }, [selectedFeedId, selectedFolderFeedIds, showUnreadOnly]);
 
   // Mark as read when selecting an article (only on index change, not entries change)
   useEffect(() => {
@@ -282,13 +310,13 @@ export default function Home() {
     []
   );
 
-  // Auto-extract full text when article only has summary
+  // Auto-extract full text for all articles
   useEffect(() => {
     setExtractedContent(null);
     setExtracting(false);
     setExtractError(null);
 
-    if (!selectedEntry || selectedEntry.content?.content || !selectedEntryUrl) return;
+    if (!selectedEntry || !selectedEntryUrl) return;
 
     let cancelled = false;
     doExtract(selectedEntryUrl, () => cancelled);
@@ -297,11 +325,58 @@ export default function Home() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedEntry?.id, doExtract]);
 
-  // Manual extraction trigger
-  const handleExtractFullText = useCallback(() => {
-    if (!selectedEntryUrl) return;
-    doExtract(selectedEntryUrl);
-  }, [selectedEntryUrl, doExtract]);
+
+
+  // Clear translation when article changes
+  useEffect(() => {
+    setTranslatedContent(null);
+    setShowTranslateMenu(false);
+  }, [selectedEntry?.id]);
+
+  // Translation handler
+  const handleTranslate = useCallback(async (service: "ai" | "deepl" | "google") => {
+    if (!selectedEntry) return;
+    const content = extractedContent || selectedEntry.content?.content || selectedEntry.summary?.content || "";
+    if (!content) return;
+
+    if (service === "google") {
+      // Open Google Translate in new tab
+      const url = selectedEntry.alternate?.[0]?.href;
+      if (url) {
+        window.open(`https://translate.google.com/translate?sl=auto&tl=ja&u=${encodeURIComponent(url)}`, "_blank");
+      }
+      return;
+    }
+
+    if (service === "deepl") {
+      // Open DeepL with text (limited to ~5000 chars)
+      const text = stripHtml(content).slice(0, 5000);
+      window.open(`https://www.deepl.com/translator#en/ja/${encodeURIComponent(text)}`, "_blank");
+      return;
+    }
+
+    // AI translation via chat API
+    setTranslating(true);
+    try {
+      const textContent = stripHtml(content).slice(0, 8000);
+      const res = await fetch("/api/ai/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: [
+            { role: "user", content: `以下の記事を日本語に翻訳してください。HTMLタグは使わず、プレーンテキストで出力してください。\n\n${textContent}` },
+          ],
+        }),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      setTranslatedContent(data.content || data.message);
+    } catch {
+      setTranslatedContent("翻訳に失敗しました。AIモデルの設定を確認してください。");
+    } finally {
+      setTranslating(false);
+    }
+  }, [selectedEntry, extractedContent]);
 
   const handleToggleUnread = useCallback(
     (entry: FeedlyEntry) => {
@@ -317,7 +392,7 @@ export default function Home() {
           e.id === entry.id ? { ...e, unread: !e.unread } : e
         )
       );
-      // Update sidebar unread count immediately
+      // Update feed pane unread count immediately
       const feedId = entry.origin?.streamId;
       if (feedId) {
         const delta = entry.unread ? -1 : 1;
@@ -366,27 +441,88 @@ export default function Home() {
 
   // Refresh current feed (R key or sync button)
   const refreshFeed = useCallback(async () => {
-    if (!selectedFeedId) return;
     setSyncing(true);
     try {
-      // Crawl only the selected feed, then reload stream
+      // Crawl selected feed or all feeds
       await fetch("/api/rss/crawl", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ feedId: selectedFeedId }),
+        body: JSON.stringify(selectedFeedId ? { feedId: selectedFeedId } : {}),
       }).catch(() => {});
-      const streamRes = await fetch(`/api/rss/streams?streamId=${encodeURIComponent(selectedFeedId)}`);
-      const data = await streamRes.json();
-      if (data.error) throw new Error(data.error);
-      const items = data.items || [];
-      setEntries(showUnreadOnly ? items.filter((e: FeedlyEntry) => e.unread) : items);
-      setSelectedIndex(-1);
+
+      // Reload entries for current view
+      const feedIds = selectedFolderFeedIds || (selectedFeedId ? [selectedFeedId] : null);
+      if (feedIds && feedIds.length > 0) {
+        const params = feedIds.map(id => `streamId=${encodeURIComponent(id)}`).join("&");
+        const streamRes = await fetch(`/api/rss/streams?${params}`);
+        const data = await streamRes.json();
+        if (data.error) throw new Error(data.error);
+        const items = data.items || [];
+        setEntries(showUnreadOnly ? items.filter((e: FeedlyEntry) => e.unread) : items);
+        setSelectedIndex(-1);
+      }
+
+      // Reload unread counts
+      const feedsRes = await fetch("/api/rss/feeds");
+      const feeds = await feedsRes.json();
+      const countMap: Record<string, number> = {};
+      for (const f of feeds) {
+        if (f.unread_count != null) countMap[f.id] = f.unread_count;
+      }
+      setUnreadCounts(countMap);
     } catch (err) {
       setWarning(err instanceof Error ? err.message : "リフレッシュに失敗しました");
     } finally {
       setSyncing(false);
     }
+  }, [selectedFeedId, selectedFolderFeedIds, showUnreadOnly]);
+
+  // Refresh a specific feed (from context menu)
+  const handleRefreshSingleFeed = useCallback(async (feedId: string) => {
+    setSyncing(true);
+    try {
+      await fetch("/api/rss/crawl", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ feedId }),
+      });
+      // If the refreshed feed is currently selected, reload its entries
+      if (feedId === selectedFeedId) {
+        const streamRes = await fetch(`/api/rss/streams?streamId=${encodeURIComponent(feedId)}`);
+        const data = await streamRes.json();
+        if (!data.error) {
+          const items = data.items || [];
+          setEntries(showUnreadOnly ? items.filter((e: FeedlyEntry) => e.unread) : items);
+        }
+      }
+      // Reload unread counts
+      const feedsRes = await fetch("/api/rss/feeds");
+      const feeds = await feedsRes.json();
+      const countMap: Record<string, number> = {};
+      for (const f of feeds) {
+        if (f.unread_count != null) countMap[f.id] = f.unread_count;
+      }
+      setUnreadCounts(countMap);
+    } catch (err) {
+      setWarning(err instanceof Error ? err.message : "更新に失敗しました");
+    } finally {
+      setSyncing(false);
+    }
   }, [selectedFeedId, showUnreadOnly]);
+
+  // Delete a feed (from context menu)
+  const handleDeleteFeed = useCallback(async (feedId: string) => {
+    try {
+      await fetch(`/api/rss/feeds?feedId=${encodeURIComponent(feedId)}`, { method: "DELETE" });
+      setSubscriptions(prev => prev.filter(s => s.id !== feedId));
+      if (selectedFeedId === feedId) {
+        setSelectedFeedId(null);
+        setEntries([]);
+      }
+    } catch (err) {
+      setWarning(err instanceof Error ? err.message : "削除に失敗しました");
+    }
+  }, [selectedFeedId]);
 
   // Keyboard navigation for feeds, folders, and refresh
   useEffect(() => {
@@ -418,7 +554,7 @@ export default function Home() {
           body: JSON.stringify({ action: "markAsRead", entryIds }),
         }).catch(() => {});
         setEntries((prev) => prev.map((en) => ({ ...en, unread: false })));
-        // Update sidebar unread count
+        // Update feed pane unread count
         if (selectedFeedId) {
           setUnreadCounts((prev) => ({
             ...prev,
@@ -428,15 +564,7 @@ export default function Home() {
         return;
       }
 
-      // e: extract full text, E: force re-extract (skip cache)
-      if (e.key === "e" || e.key === "E") {
-        e.preventDefault();
-        if (selectedEntryUrl) {
-          const force = e.key === "E";
-          doExtract(selectedEntryUrl, undefined, force);
-        }
-        return;
-      }
+
 
       // u: toggle unread-only filter
       if (e.key === "u") {
@@ -565,8 +693,8 @@ export default function Home() {
       // x: toggle current folder open/close
       if (e.key === "x") {
         e.preventDefault();
-        const currentItem = sortedFeeds[feedIndex];
-        const folderLabel = currentItem?.category || "Uncategorized";
+        // Use selectedFolderLabel if a folder is selected, otherwise derive from current feed
+        const folderLabel = selectedFolderLabel || sortedFeeds[feedIndex]?.category || "Uncategorized";
         setCollapsedFolders((prev) => {
           const next = { ...prev, [folderLabel]: !prev[folderLabel] };
           fetch("/api/preferences", {
@@ -581,7 +709,7 @@ export default function Home() {
     }
     window.addEventListener("keydown", handleFeedNav);
     return () => window.removeEventListener("keydown", handleFeedNav);
-  }, [sortedFeeds, sortedCategories, feedIndex, unreadCounts, refreshFeed, entries, selectedIndex, showSearch]);
+  }, [sortedFeeds, sortedCategories, feedIndex, unreadCounts, refreshFeed, entries, selectedIndex, showSearch, selectedFolderLabel]);
 
   const handleSearchSelect = useCallback((entry: FeedlyEntry) => {
     setDetailOverride(entry);
@@ -591,18 +719,32 @@ export default function Home() {
   const handleSelectIndex = useCallback((index: number) => {
     setSelectedIndex(index);
     setDetailOverride(null); // Clear search result override on normal navigation
-    // Focus the detail pane so Space scrolls the article, not the sidebar
+    // Focus the article pane so Space scrolls the article, not the feed pane
     requestAnimationFrame(() => articleDetailRef.current?.focus());
   }, []);
 
   const handleSelectFeed = useCallback(
     (feedId: string, category?: string) => {
       setSelectedFeedId(feedId);
-      setDetailOverride(null); // Clear search result override on feed switch
-      // Find the exact position matching both feedId and category
+      setSelectedFolderFeedIds(null);
+      setSelectedFolderLabel(null);
+      setDetailOverride(null);
       const idx = category
         ? sortedFeeds.findIndex((s) => s.sub.id === feedId && s.category === category)
         : sortedFeeds.findIndex((s) => s.sub.id === feedId);
+      if (idx >= 0) setFeedIndex(idx);
+    },
+    [sortedFeeds]
+  );
+
+  const handleSelectFolder = useCallback(
+    (feedIds: string[], folderLabel: string) => {
+      setSelectedFeedId(null);
+      setSelectedFolderFeedIds(feedIds);
+      setSelectedFolderLabel(folderLabel);
+      setDetailOverride(null);
+      // Update feedIndex to the first feed in this folder so keyboard shortcuts (x, g, ;) work correctly
+      const idx = sortedFeeds.findIndex((s) => s.category === folderLabel);
       if (idx >= 0) setFeedIndex(idx);
     },
     [sortedFeeds]
@@ -659,6 +801,22 @@ export default function Home() {
 
   return (
     <div className="flex flex-col h-screen overflow-hidden">
+      {initialCrawlStatus && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100]">
+          <div className="bg-white rounded-lg shadow-xl p-6 max-w-sm mx-4">
+            <div className="flex items-center gap-3">
+              <svg className="animate-spin h-5 w-5 text-orange-500 flex-shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+              </svg>
+              <div>
+                <p className="text-sm font-medium text-gray-900">初回セットアップ</p>
+                <p className="text-xs text-gray-500 mt-1 whitespace-pre-line">{initialCrawlStatus}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       {warning && (
         <div className="flex items-center justify-between px-4 py-2 bg-orange-900/90 text-orange-200 text-sm flex-shrink-0">
           <div className="flex items-center gap-2">
@@ -673,7 +831,7 @@ export default function Home() {
           </button>
         </div>
       )}
-      <div className="flex flex-1 min-h-0">
+      <div className="flex flex-1 min-h-0 bg-white">
       <FeedSidebar
         subscriptions={subscriptions}
         selectedFeedId={selectedFeedId}
@@ -688,18 +846,22 @@ export default function Home() {
         username={username}
         syncing={syncing}
         onSync={refreshFeed}
+        onRefreshFeed={handleRefreshSingleFeed}
+        onDeleteFeed={handleDeleteFeed}
+        onSelectFolder={handleSelectFolder}
+        selectedFolderLabel={selectedFolderLabel}
         onSettings={() => router.push("/setup")}
         onLogout={async () => {
           await fetch("/api/auth/logout", { method: "POST" });
           router.push("/login");
         }}
-        width={sidebarWidth}
+        width={feedPaneWidth}
       />
-      <ResizeHandle onResize={(d) => setSidebarWidth((w) => Math.max(140, Math.min(500, w + d)))} />
-      <div className="flex-shrink-0 flex flex-col border-r overflow-hidden" style={{ width: `${listWidth}px`, minWidth: 160 }}>
-        <div className="px-3 py-2 border-b border-orange-600 bg-orange-500 flex-shrink-0">
+      <ResizeHandle onResize={(d) => setFeedPaneWidth((w) => Math.max(140, Math.min(500, w + d)))} />
+      <div className="flex-shrink-0 flex flex-col border-r overflow-hidden" style={{ width: `${articleListWidth}px`, minWidth: 160 }}>
+        <div className="px-3 py-2 border-b border-orange-600 bg-orange-500 flex-shrink-0 min-h-[52px] flex flex-col justify-center">
           <h2 className="font-semibold text-white text-sm truncate">
-            {subscriptions.find((s) => s.id === selectedFeedId)?.title ||
+            {selectedFolderLabel || subscriptions.find((s) => s.id === selectedFeedId)?.title ||
               "All Articles"}
           </h2>
           <p className="text-xs text-orange-100">
@@ -716,8 +878,81 @@ export default function Home() {
           disableKeyboard={showSearch}
         />
       </div>
-      <ResizeHandle onResize={(d) => setListWidth((w) => Math.max(160, Math.min(600, w + d)))} />
+      <ResizeHandle onResize={(d) => setArticleListWidth((w) => Math.max(160, Math.min(600, w + d)))} />
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        {/* Article pane header: search + action icons */}
+        <div className="px-3 py-2 border-b border-orange-600 bg-orange-500 flex-shrink-0 min-h-[52px] flex items-center gap-2">
+            <div className="flex items-center gap-1 flex-shrink-0">
+              {/* Translate */}
+              <button
+                ref={(el) => { if (el) el.dataset.translateBtn = "1"; }}
+                onClick={(e) => {
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  setTranslateMenuPos({ x: rect.right, y: rect.bottom + 4 });
+                  setShowTranslateMenu(prev => !prev);
+                }}
+                className={`p-1.5 rounded transition-colors ${translating ? "text-white bg-orange-600" : "text-white/85 hover:text-white hover:bg-orange-600"}`}
+                title="翻訳"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M5 8l6 6"/><path d="M4 14l6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="M22 22l-5-10-5 10"/><path d="M14 18h6"/>
+                </svg>
+              </button>
+              {/* AI panel toggle */}
+              <button
+                onClick={() => setShowAIPanel(prev => !prev)}
+                className={`p-1.5 rounded transition-colors ${showAIPanel ? "text-white bg-orange-600" : "text-white/85 hover:text-white hover:bg-orange-600"}`}
+                title="AI パネル"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 2a4 4 0 0 1 4 4v1h1a3 3 0 0 1 3 3v1a3 3 0 0 1-3 3h-1v4a2 2 0 0 1-2 2H10a2 2 0 0 1-2-2v-4H7a3 3 0 0 1-3-3v-1a3 3 0 0 1 3-3h1V6a4 4 0 0 1 4-4z"/><circle cx="10" cy="10" r="1"/><circle cx="14" cy="10" r="1"/>
+                </svg>
+              </button>
+              {/* Site preview */}
+              <button
+                onClick={() => setSitePreviewEntry(prev => prev?.id === selectedEntry?.id ? null : selectedEntry)}
+                className={`p-1.5 rounded transition-colors ${sitePreviewEntry ? "text-white bg-orange-600" : "text-white/85 hover:text-white hover:bg-orange-600"}`}
+                title="サイトプレビュー"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>
+                </svg>
+              </button>
+              {/* Open in new tab */}
+              {selectedEntryUrl ? (
+                <a
+                  href={selectedEntryUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="p-1.5 text-white/85 hover:text-white hover:bg-orange-600 rounded transition-colors"
+                  title="元サイトを開く"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+                  </svg>
+                </a>
+              ) : (
+                <span
+                  className="p-1.5 text-white opacity-40 cursor-not-allowed rounded"
+                  title="元サイトを開く"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+                  </svg>
+                </span>
+              )}
+            </div>
+          {/* Article text search */}
+          <div className="flex-shrink-0 ml-auto">
+            <input
+              type="text"
+              placeholder="記事内を検索..."
+              value={articleSearchQuery}
+              onChange={(e) => setArticleSearchQuery(e.target.value)}
+              className="w-48 px-2 py-1 text-sm bg-white text-gray-800 placeholder-gray-400 border border-orange-300 rounded focus:outline-none focus:border-orange-500 focus:ring-1 focus:ring-orange-500"
+            />
+          </div>
+        </div>
         <div className={showAIPanel ? "flex-1 min-h-0 flex flex-col overflow-hidden" : "flex-1 flex flex-col min-w-0 overflow-hidden"}>
           <ArticleDetail
             ref={articleDetailRef}
@@ -726,7 +961,9 @@ export default function Home() {
             extractedContent={extractedContent}
             extracting={extracting}
             extractError={extractError}
-            onExtractFullText={handleExtractFullText}
+            translatedContent={translatedContent}
+            translating={translating}
+            searchQuery={articleSearchQuery}
           />
         </div>
         {showAIPanel && (
@@ -738,6 +975,26 @@ export default function Home() {
         )}
         <KeyboardHint />
       </div>
+
+      {showTranslateMenu && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setShowTranslateMenu(false)} />
+          <div
+            className="fixed z-50 bg-white rounded-md shadow-lg border border-gray-200 py-1 min-w-[140px]"
+            style={{ left: translateMenuPos.x - 140, top: translateMenuPos.y }}
+          >
+            {([["ai", "AI 翻訳"], ["deepl", "DeepL"], ["google", "Google 翻訳"]] as const).map(([service, label]) => (
+              <button
+                key={service}
+                onClick={() => { handleTranslate(service); setShowTranslateMenu(false); }}
+                className="w-full text-left px-3 py-1.5 text-sm text-gray-700 hover:bg-orange-50 transition-colors"
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
 
       {showSearch && (
         <SearchModal

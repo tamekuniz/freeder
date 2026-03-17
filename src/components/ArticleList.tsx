@@ -79,21 +79,9 @@ export default function ArticleList({
         case "b":
           e.preventDefault();
           if (entry?.alternate?.[0]?.href) {
-            // Open in background tab: create a link with event to prevent focus steal
-            const a = document.createElement("a");
-            a.href = entry.alternate[0].href;
-            a.target = "_blank";
-            a.rel = "noopener";
-            document.body.appendChild(a);
-            // Dispatch click with Cmd/Ctrl held to hint background tab
-            a.dispatchEvent(
-              new MouseEvent("click", {
-                ctrlKey: true,
-                metaKey: true,
-                bubbles: true,
-              })
-            );
-            document.body.removeChild(a);
+            // Open in background tab and keep focus on current window
+            window.open(entry.alternate[0].href, "_blank");
+            window.focus();
           }
           break;
         case "m":
@@ -143,16 +131,14 @@ export default function ArticleList({
             onClick={() => onSelect(index)}
             className={`
               px-3 py-2 border-b border-gray-200 cursor-pointer transition-colors
-              ${isSelected ? "bg-orange-50 border-l-4 border-l-orange-500" : "hover:bg-gray-50"}
+              border-l-4 ${isSelected ? "bg-orange-50 border-l-orange-500" : "border-l-transparent hover:bg-gray-50"}
               ${entry.unread ? "" : "opacity-75"}
             `}
           >
-            <div className="flex items-start gap-2">
+            <div className="flex items-center gap-2">
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-0.5">
-                  {entry.unread && (
-                    <span className="w-2 h-2 bg-orange-500 rounded-full flex-shrink-0" />
-                  )}
+                  <span className={`w-2 h-2 rounded-full flex-shrink-0 ${entry.unread ? "bg-orange-500" : "border border-gray-300"}`} />
                   <span className={`${fs.meta} text-gray-500 truncate`}>
                     {entry.origin?.title}
                   </span>

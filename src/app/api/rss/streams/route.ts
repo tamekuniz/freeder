@@ -8,27 +8,41 @@ export async function GET(request: NextRequest) {
     if (auth instanceof NextResponse) return auth;
 
     const { searchParams } = new URL(request.url);
-    const streamId = searchParams.get("streamId");
+    const streamIds = searchParams.getAll("streamId");
 
-    if (!streamId) {
+    if (streamIds.length === 0) {
       return NextResponse.json(
         { error: "streamId is required" },
         { status: 400 }
       );
     }
 
-    if (!streamId.startsWith("rss:")) {
-      return NextResponse.json(
-        { error: "streamId must start with 'rss:'" },
-        { status: 400 }
-      );
+    for (const id of streamIds) {
+      if (!id.startsWith("rss:")) {
+        return NextResponse.json(
+          { error: "streamId must start with 'rss:'" },
+          { status: 400 }
+        );
+      }
     }
 
-    const entries = await getCachedEntries(streamId);
+    // Fetch entries from all requested streams and merge
+    const allEntries: unknown[] = [];
+    for (const id of streamIds) {
+      const entries = await getCachedEntries(id);
+      if (entries) allEntries.push(...entries);
+    }
+
+    // Sort by published date descending
+    allEntries.sort((a, b) => {
+      const ta = (a as { published?: number }).published || 0;
+      const tb = (b as { published?: number }).published || 0;
+      return tb - ta;
+    });
 
     return NextResponse.json({
-      id: streamId,
-      items: entries,
+      id: streamIds.length === 1 ? streamIds[0] : `folder:${streamIds.length}`,
+      items: allEntries,
     });
   } catch (error) {
     console.error("GET /api/rss/streams error:", error);

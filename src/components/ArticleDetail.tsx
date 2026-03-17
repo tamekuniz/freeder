@@ -17,7 +17,9 @@ interface Props {
   extractedContent?: string | null;
   extracting?: boolean;
   extractError?: string | null;
-  onExtractFullText?: () => void;
+  translatedContent?: string | null;
+  translating?: boolean;
+  searchQuery?: string;
 }
 
 function formatDate(timestamp: number): string {
@@ -41,7 +43,9 @@ const ArticleDetail = forwardRef<ArticleDetailHandle, Props>(function ArticleDet
   extractedContent,
   extracting,
   extractError,
-  onExtractFullText,
+  translatedContent,
+  translating,
+  searchQuery,
 }, ref) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -58,6 +62,62 @@ const ArticleDetail = forwardRef<ArticleDetailHandle, Props>(function ArticleDet
     }
   }, [entry?.id]);
 
+  // Article text search: scroll to first match using browser find
+  const contentRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    function clearMarks(container: HTMLElement) {
+      container.querySelectorAll("mark[data-search]").forEach(m => {
+        const parent = m.parentNode;
+        if (parent) {
+          parent.replaceChild(document.createTextNode(m.textContent || ""), m);
+          parent.normalize();
+        }
+      });
+    }
+
+    if (!contentRef.current || !searchQuery?.trim()) {
+      if (contentRef.current) clearMarks(contentRef.current);
+      return;
+    }
+
+    const query = searchQuery.trim().toLowerCase();
+    const container = contentRef.current;
+    clearMarks(container);
+
+    // Walk text nodes and wrap matches with <mark>
+    const treeWalker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+    const matches: { node: Text; index: number }[] = [];
+    let textNode: Node | null;
+    while ((textNode = treeWalker.nextNode())) {
+      const text = textNode.textContent?.toLowerCase() || "";
+      let idx = text.indexOf(query);
+      while (idx >= 0) {
+        matches.push({ node: textNode as Text, index: idx });
+        idx = text.indexOf(query, idx + 1);
+      }
+    }
+
+    // Apply marks in reverse order to preserve indices
+    let firstMark: HTMLElement | null = null;
+    for (let i = matches.length - 1; i >= 0; i--) {
+      const { node: tNode, index } = matches[i];
+      const mark = document.createElement("mark");
+      mark.setAttribute("data-search", "");
+      mark.style.backgroundColor = "#fbbf24";
+      mark.style.color = "#000";
+      mark.style.borderRadius = "2px";
+      const range = document.createRange();
+      range.setStart(tNode, index);
+      range.setEnd(tNode, index + query.length);
+      range.surroundContents(mark);
+      firstMark = mark;
+    }
+
+    if (firstMark) {
+      firstMark.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [searchQuery, extractedContent, entry?.id]);
+
   if (!entry) {
     return (
       <div className="flex-1 flex items-center justify-center text-gray-400">
@@ -68,41 +128,16 @@ const ArticleDetail = forwardRef<ArticleDetailHandle, Props>(function ArticleDet
 
   const originalContent = entry.content?.content || entry.summary?.content || "";
   const content = extractedContent || originalContent;
-  const url = entry.alternate?.[0]?.href;
   const proseClass = PROSE_CLASSES[fontSizeLevel] || "prose-sm";
   const hasSummaryOnly = !entry.content?.content;
 
   return (
     <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-      <div className="px-6 py-4 bg-white flex-shrink-0">
-        <h2 className="text-lg font-semibold text-gray-900 leading-snug mb-1">
-          {entry.title}
-        </h2>
+      <div className="px-6 py-3 bg-white border-b border-gray-100 flex-shrink-0">
         <div className="flex items-center gap-2 text-sm text-gray-500">
           <span>{entry.origin?.title}</span>
           {entry.author && <span>— {entry.author}</span>}
           <span>{formatDate(entry.published)}</span>
-          <div className="ml-auto flex items-center gap-2">
-            {onExtractFullText && url && !extracting && (
-              <button
-                onClick={onExtractFullText}
-                className="text-orange-500 hover:text-orange-600 hover:underline"
-                title="全文取得"
-              >
-                {extractedContent ? "再取得 ↻" : "全文取得 ↓"}
-              </button>
-            )}
-            {url && (
-              <a
-                href={url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-orange-500 hover:underline"
-              >
-                Open ↗
-              </a>
-            )}
-          </div>
         </div>
       </div>
       <div
@@ -126,7 +161,19 @@ const ArticleDetail = forwardRef<ArticleDetailHandle, Props>(function ArticleDet
             ● 全文表示中
           </div>
         )}
-        <div dangerouslySetInnerHTML={{ __html: content }} />
+        {translating && (
+          <div className="text-gray-400 text-sm mb-4 flex items-center gap-2">
+            <span className="inline-block w-4 h-4 border-2 border-orange-300 border-t-orange-500 rounded-full animate-spin" />
+            翻訳中...
+          </div>
+        )}
+        {translatedContent && (
+          <div className="mb-4 p-4 bg-orange-50 border border-orange-200 rounded-lg">
+            <div className="text-xs text-orange-500 font-medium mb-2">AI 翻訳</div>
+            <div className="text-gray-800 whitespace-pre-wrap">{translatedContent}</div>
+          </div>
+        )}
+        <div ref={contentRef} dangerouslySetInnerHTML={{ __html: content }} />
       </div>
     </div>
   );
