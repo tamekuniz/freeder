@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getStream } from "@/lib/feedly";
+import { getStream, FeedlyTokenNotFoundError } from "@/lib/feedly";
 import { cacheEntries, getCachedEntries } from "@/lib/db";
 import { requireAuthUserId } from "@/lib/api-auth";
 
@@ -31,6 +31,9 @@ export async function GET(request: NextRequest) {
     }
     return NextResponse.json(stream);
   } catch (error) {
+    if (error instanceof FeedlyTokenNotFoundError) {
+      return NextResponse.json({ error: "feedly token not configured" }, { status: 403 });
+    }
     const cached = getCachedEntries(streamId);
     if (cached) {
       return NextResponse.json({ id: streamId, items: cached });

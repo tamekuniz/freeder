@@ -2,13 +2,20 @@ import { getFeedlyTokenFull, setFeedlyTokenWithRefresh } from "./db";
 
 const FEEDLY_BASE_URL = "https://cloud.feedly.com";
 
+export class FeedlyTokenNotFoundError extends Error {
+  constructor() {
+    super("feedly token not configured");
+    this.name = "FeedlyTokenNotFoundError";
+  }
+}
+
 // Token is about to expire if less than 5 minutes remain
 const TOKEN_REFRESH_BUFFER = 5 * 60;
 
 async function getValidToken(userId: number): Promise<string> {
   const tokenData = getFeedlyTokenFull(userId);
   if (!tokenData) {
-    throw new Error("No Feedly token found");
+    throw new FeedlyTokenNotFoundError();
   }
 
   // Check if token needs refresh
@@ -119,32 +126,29 @@ export async function getUnreadCounts(
   return feedlyFetch(tokenOrUserId, "/v3/markers/counts");
 }
 
-export async function markAsRead(
+async function updateMarkers(
   tokenOrUserId: string | number,
+  action: "markAsRead" | "keepUnread",
   entryIds: string[]
 ): Promise<void> {
   await feedlyFetch(tokenOrUserId, "/v3/markers", {
     method: "POST",
-    body: JSON.stringify({
-      action: "markAsRead",
-      type: "entries",
-      entryIds,
-    }),
+    body: JSON.stringify({ action, type: "entries", entryIds }),
   });
+}
+
+export async function markAsRead(
+  tokenOrUserId: string | number,
+  entryIds: string[]
+): Promise<void> {
+  return updateMarkers(tokenOrUserId, "markAsRead", entryIds);
 }
 
 export async function keepUnread(
   tokenOrUserId: string | number,
   entryIds: string[]
 ): Promise<void> {
-  await feedlyFetch(tokenOrUserId, "/v3/markers", {
-    method: "POST",
-    body: JSON.stringify({
-      action: "keepUnread",
-      type: "entries",
-      entryIds,
-    }),
-  });
+  return updateMarkers(tokenOrUserId, "keepUnread", entryIds);
 }
 
 export async function starEntry(

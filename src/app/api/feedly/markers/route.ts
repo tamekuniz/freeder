@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { markAsRead, keepUnread, getUnreadCounts } from "@/lib/feedly";
+import { markAsRead, keepUnread, getUnreadCounts, FeedlyTokenNotFoundError } from "@/lib/feedly";
 import { cacheUnreadCounts, getCachedUnreadCounts } from "@/lib/db";
 import { requireAuthUserId } from "@/lib/api-auth";
 
@@ -18,6 +18,9 @@ export async function GET() {
     }
     return NextResponse.json(counts);
   } catch (error) {
+    if (error instanceof FeedlyTokenNotFoundError) {
+      return NextResponse.json({ error: "feedly token not configured" }, { status: 403 });
+    }
     const cached = getCachedUnreadCounts();
     if (cached) {
       const unreadcounts = Object.entries(cached).map(([id, count]) => ({
@@ -60,6 +63,9 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ success: true });
   } catch (error) {
+    if (error instanceof FeedlyTokenNotFoundError) {
+      return NextResponse.json({ error: "feedly token not configured" }, { status: 403 });
+    }
     const message = error instanceof Error ? error.message : "Unknown error";
     return NextResponse.json({ error: message }, { status: 500 });
   }

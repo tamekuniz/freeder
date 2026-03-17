@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getSubscriptions, getStream } from "@/lib/feedly";
+import { getSubscriptions, getStream, FeedlyTokenNotFoundError } from "@/lib/feedly";
 import { cacheEntries } from "@/lib/db";
 import { requireAuthUserId } from "@/lib/api-auth";
 
@@ -33,6 +33,9 @@ export async function POST() {
       articles: totalCached,
     });
   } catch (error) {
+    if (error instanceof FeedlyTokenNotFoundError) {
+      return NextResponse.json({ error: "feedly token not configured" }, { status: 403 });
+    }
     const message = error instanceof Error ? error.message : "Crawl failed";
     return NextResponse.json({ error: message }, { status: 500 });
   }

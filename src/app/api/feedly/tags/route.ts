@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { starEntry, unstarEntry } from "@/lib/feedly";
+import { starEntry, unstarEntry, FeedlyTokenNotFoundError } from "@/lib/feedly";
 import { requireAuthUserId } from "@/lib/api-auth";
 
 export async function PUT(request: NextRequest) {
@@ -17,6 +17,9 @@ export async function PUT(request: NextRequest) {
     await starEntry(auth.userId, entryId);
     return NextResponse.json({ success: true });
   } catch (error) {
+    if (error instanceof FeedlyTokenNotFoundError) {
+      return NextResponse.json({ error: "feedly token not configured" }, { status: 403 });
+    }
     const message = error instanceof Error ? error.message : "Unknown error";
     return NextResponse.json({ error: message }, { status: 500 });
   }
@@ -37,6 +40,9 @@ export async function DELETE(request: NextRequest) {
     await unstarEntry(auth.userId, entryId);
     return NextResponse.json({ success: true });
   } catch (error) {
+    if (error instanceof FeedlyTokenNotFoundError) {
+      return NextResponse.json({ error: "feedly token not configured" }, { status: 403 });
+    }
     const message = error instanceof Error ? error.message : "Unknown error";
     return NextResponse.json({ error: message }, { status: 500 });
   }

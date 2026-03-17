@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getSubscriptions } from "@/lib/feedly";
+import { getSubscriptions, FeedlyTokenNotFoundError } from "@/lib/feedly";
 import { cacheSubscriptions, getCachedSubscriptions } from "@/lib/db";
 import { requireAuthUserId } from "@/lib/api-auth";
 
@@ -15,6 +15,9 @@ export async function GET() {
     const cached = getCachedSubscriptions();
     if (cached) {
       return NextResponse.json(cached);
+    }
+    if (error instanceof FeedlyTokenNotFoundError) {
+      return NextResponse.json({ error: "feedly token not configured" }, { status: 403 });
     }
     const message = error instanceof Error ? error.message : "Unknown error";
     return NextResponse.json({ error: message }, { status: 500 });

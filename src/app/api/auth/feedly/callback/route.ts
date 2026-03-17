@@ -53,7 +53,8 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(new URL("/", request.url));
   } catch (err) {
     const errorUrl = new URL("/setup", request.url);
-    errorUrl.searchParams.set("error", err instanceof Error ? err.message : "token_exchange_failed");
+    console.error("Feedly token exchange failed:", err);
+    errorUrl.searchParams.set("error", "token_exchange_failed");
     return NextResponse.redirect(errorUrl);
   }
 }
