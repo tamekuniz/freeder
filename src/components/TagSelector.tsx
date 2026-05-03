@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
+import { apiFetch } from "@/lib/base-path";
 import TagBadge from "./TagBadge";
 
 interface Tag {
@@ -27,7 +28,7 @@ export default function TagSelector({ entryId, currentTags, onClose, onTagsChang
 
   // 全タグ取得
   useEffect(() => {
-    fetch("/api/rss/tags")
+    apiFetch("/api/rss/tags")
       .then(r => r.json())
       .then(tags => { setAllTags(tags); setLoading(false); })
       .catch(() => setLoading(false));
@@ -35,7 +36,7 @@ export default function TagSelector({ entryId, currentTags, onClose, onTagsChang
 
   // AIタグ取得
   useEffect(() => {
-    fetch(`/api/rss/tags/ai?entryId=${encodeURIComponent(entryId)}`)
+    apiFetch(`/api/rss/tags/ai?entryId=${encodeURIComponent(entryId)}`)
       .then(r => r.json())
       .then(tags => { if (Array.isArray(tags)) setAiTags(tags); })
       .catch(() => {});
@@ -50,7 +51,7 @@ export default function TagSelector({ entryId, currentTags, onClose, onTagsChang
 
   // タグ追加（既存タグをエントリに付与）
   const addTag = async (tagId: number) => {
-    await fetch("/api/rss/tags/entries", {
+    await apiFetch("/api/rss/tags/entries", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ entryId, tagId }),
@@ -60,7 +61,7 @@ export default function TagSelector({ entryId, currentTags, onClose, onTagsChang
 
   // タグ削除（エントリからタグを外す）
   const removeTag = async (tagId: number) => {
-    await fetch("/api/rss/tags/entries", {
+    await apiFetch("/api/rss/tags/entries", {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ entryId, tagId }),
@@ -71,7 +72,7 @@ export default function TagSelector({ entryId, currentTags, onClose, onTagsChang
   // 新規タグ作成
   const createTag = async () => {
     if (!newTagName.trim()) return;
-    const res = await fetch("/api/rss/tags", {
+    const res = await apiFetch("/api/rss/tags", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: newTagName.trim() }),
@@ -93,7 +94,7 @@ export default function TagSelector({ entryId, currentTags, onClose, onTagsChang
       return;
     }
     // なければ新規作成
-    const res = await fetch("/api/rss/tags", {
+    const res = await apiFetch("/api/rss/tags", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: tagName }),

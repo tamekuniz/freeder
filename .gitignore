@@ -47,3 +47,7 @@ freeder-cache.db-shm
 
 # project scraps
 _wastebasket/
+
+# フォーメーション state / tasks
+tasks/
+.claude/.fon-*

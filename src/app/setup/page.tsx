@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { apiFetch, BASE_PATH } from "@/lib/base-path";
 import { useRouter } from "next/navigation";
 import { LogoWithText } from "@/components/Logo";
 
@@ -24,7 +25,7 @@ export default function SetupPage() {
 
   // Fetch existing feed URLs for OPML duplicate detection
   useEffect(() => {
-    fetch("/api/rss/feeds").then(r => r.json()).then(setRssFeeds).catch(() => {});
+    apiFetch("/api/rss/feeds").then(r => r.json()).then(setRssFeeds).catch(() => {});
   }, []);
 
   // Add RSS feed
@@ -33,7 +34,7 @@ export default function SetupPage() {
     setAddingFeed(true);
     setFeedMessage("");
     try {
-      const res = await fetch("/api/rss/feeds", {
+      const res = await apiFetch("/api/rss/feeds", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url: feedUrl.trim() }),
@@ -44,7 +45,7 @@ export default function SetupPage() {
       setFeedMessageType("success");
       setFeedUrl("");
       // Reload feeds for OPML duplicate detection
-      const feeds = await fetch("/api/rss/feeds").then(r => r.json());
+      const feeds = await apiFetch("/api/rss/feeds").then(r => r.json());
       setRssFeeds(feeds);
     } catch (err) {
       setFeedMessage(err instanceof Error ? err.message : "追加に失敗しました");
@@ -61,7 +62,7 @@ export default function SetupPage() {
     const text = await file.text();
     setOpmlText(text);
     try {
-      const res = await fetch("/api/rss/import", {
+      const res = await apiFetch("/api/rss/import", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ opml: text, preview: true }),
@@ -94,7 +95,7 @@ export default function SetupPage() {
       const selectedFeedUrls = opmlPreview
         .filter((_, i) => opmlSelected.has(i))
         .map(item => item.feedUrl);
-      const res = await fetch("/api/rss/import", {
+      const res = await apiFetch("/api/rss/import", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ opml: opmlText, selectedUrls: selectedFeedUrls }),
@@ -105,7 +106,7 @@ export default function SetupPage() {
       setOpmlSelected(new Set());
       setOpmlText("");
       // Reload feeds
-      const feeds = await fetch("/api/rss/feeds").then(r => r.json());
+      const feeds = await apiFetch("/api/rss/feeds").then(r => r.json());
       setRssFeeds(feeds);
     } catch {
       setImportResult("インポートに失敗しました");
@@ -116,7 +117,7 @@ export default function SetupPage() {
 
   // Build bookmarklet href (needs window.location.origin)
   const bookmarkletOrigin = typeof window !== "undefined" ? window.location.origin : "";
-  const bookmarkletHref = `javascript:void(fetch('${bookmarkletOrigin}/api/rss/feeds',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:location.href}),credentials:'include'}).then(r=>r.json()).then(d=>alert(d.error?'Error: '+d.error:'Added: '+(d.title||d.feed_url))).catch(()=>alert('Failed to add feed')))`;
+  const bookmarkletHref = `javascript:void(fetch('${bookmarkletOrigin}${BASE_PATH}/api/rss/feeds',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:location.href}),credentials:'include'}).then(r=>r.json()).then(d=>alert(d.error?'Error: '+d.error:'Added: '+(d.title||d.feed_url))).catch(()=>alert('Failed to add feed')))`;
 
   return (
     <div className="min-h-screen bg-orange-500 flex items-center justify-center p-4">

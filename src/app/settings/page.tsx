@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { apiFetch, BASE_PATH } from "@/lib/base-path";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { LogoWithText } from "@/components/Logo";
@@ -52,9 +53,9 @@ export default function SettingsPage() {
   // Load user info, feeds, and preferences in parallel
   useEffect(() => {
     Promise.all([
-      fetch("/api/auth/me").then(r => r.json()),
-      fetch("/api/rss/feeds").then(r => r.json()).catch(() => []),
-      fetch("/api/preferences").then(r => r.json()).catch(() => ({})),
+      apiFetch("/api/auth/me").then(r => r.json()),
+      apiFetch("/api/rss/feeds").then(r => r.json()).catch(() => []),
+      apiFetch("/api/preferences").then(r => r.json()).catch(() => ({})),
     ]).then(([me, feeds, prefs]) => {
       if (!me.username) { router.push("/login"); return; }
       setUsername(me.username);
@@ -86,7 +87,7 @@ export default function SettingsPage() {
     }
     setPwLoading(true);
     try {
-      const res = await fetch("/api/auth/password", {
+      const res = await apiFetch("/api/auth/password", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ currentPassword, newPassword }),
@@ -107,7 +108,7 @@ export default function SettingsPage() {
     try {
       const body: Record<string, string> = { url: feedUrl.trim() };
       if (feedCategory.trim()) body.category = feedCategory.trim();
-      const res = await fetch("/api/rss/feeds", {
+      const res = await apiFetch("/api/rss/feeds", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -117,7 +118,7 @@ export default function SettingsPage() {
       setFeedMessage(`「${data.title || data.feed_url}」を追加しました`);
       setFeedMessageType("success");
       setFeedUrl("");
-      const feeds = await fetch("/api/rss/feeds").then(r => r.json());
+      const feeds = await apiFetch("/api/rss/feeds").then(r => r.json());
       setRssFeeds(feeds);
       const cats = new Set<string>();
       for (const f of feeds) { if (f.category) cats.add(f.category); }
@@ -135,7 +136,7 @@ export default function SettingsPage() {
     const text = await file.text();
     setOpmlText(text);
     try {
-      const res = await fetch("/api/rss/import", {
+      const res = await apiFetch("/api/rss/import", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ opml: text, preview: true }),
@@ -161,7 +162,7 @@ export default function SettingsPage() {
     setImporting(true);
     try {
       const selectedFeedUrls = opmlPreview.filter((_, i) => opmlSelected.has(i)).map(item => item.feedUrl);
-      const res = await fetch("/api/rss/import", {
+      const res = await apiFetch("/api/rss/import", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ opml: opmlText, selectedUrls: selectedFeedUrls }),
@@ -169,7 +170,7 @@ export default function SettingsPage() {
       const data = await res.json();
       setImportResult(`${data.imported}件インポート、${data.skipped}件スキップ`);
       setOpmlPreview([]); setOpmlSelected(new Set()); setOpmlText("");
-      const feeds = await fetch("/api/rss/feeds").then(r => r.json());
+      const feeds = await apiFetch("/api/rss/feeds").then(r => r.json());
       setRssFeeds(feeds);
     } catch { setImportResult("インポートに失敗しました"); }
     finally { setImporting(false); }
@@ -190,7 +191,7 @@ export default function SettingsPage() {
       ];
       await Promise.all(
         settings.map(({ key, value }) =>
-          fetch("/api/preferences", {
+          apiFetch("/api/preferences", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ key, value }),
@@ -214,7 +215,7 @@ export default function SettingsPage() {
 
     while (hasMore) {
       try {
-        const res = await fetch("/api/rss/tags/ai/batch", {
+        const res = await apiFetch("/api/rss/tags/ai/batch", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ limit: 20 }),
@@ -249,7 +250,7 @@ export default function SettingsPage() {
 
   // Bookmarklet
   const bookmarkletOrigin = typeof window !== "undefined" ? window.location.origin : "";
-  const bookmarkletHref = `javascript:void(fetch('${bookmarkletOrigin}/api/rss/feeds',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:location.href}),credentials:'include'}).then(r=>r.json()).then(d=>alert(d.error?'Error: '+d.error:'Added: '+(d.title||d.feed_url))).catch(()=>alert('Failed to add feed')))`;
+  const bookmarkletHref = `javascript:void(fetch('${bookmarkletOrigin}${BASE_PATH}/api/rss/feeds',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:location.href}),credentials:'include'}).then(r=>r.json()).then(d=>alert(d.error?'Error: '+d.error:'Added: '+(d.title||d.feed_url))).catch(()=>alert('Failed to add feed')))`;
 
   const sectionClass = "bg-gray-50 border border-gray-200 rounded-lg p-5 mb-5";
   const labelClass = "block text-sm text-gray-600 mb-1";

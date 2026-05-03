@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getIronSession } from "iron-session";
 import { SessionData, sessionOptions } from "@/lib/session";
 
+const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
 const publicPaths = ["/login", "/setup", "/api/auth"];
 
 export async function middleware(request: NextRequest) {
@@ -25,7 +26,7 @@ export async function middleware(request: NextRequest) {
     if (pathname.startsWith("/api/")) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    return NextResponse.redirect(new URL("/login", request.url));
+    return NextResponse.redirect(new URL(`${BASE_PATH}/login`, request.url));
   }
 
   return response;

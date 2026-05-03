@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, forwardRef, useImperativeHandle } from "react";
+import { apiFetch } from "@/lib/base-path";
 import type { FeedlyEntry } from "@/lib/feedly";
 import TagBadge from "./TagBadge";
 import TagSelector from "./TagSelector";
@@ -128,7 +129,7 @@ const ArticleDetail = forwardRef<ArticleDetailHandle, Props>(function ArticleDet
   // Fetch user tags for current entry
   useEffect(() => {
     if (!entry?.id) { setUserTags([]); return; }
-    fetch(`/api/rss/tags/entries?entryId=${encodeURIComponent(entry.id)}`)
+    apiFetch(`/api/rss/tags/entries?entryId=${encodeURIComponent(entry.id)}`)
       .then(r => r.json())
       .then(tags => { if (Array.isArray(tags)) setUserTags(tags); })
       .catch(() => setUserTags([]));
@@ -136,7 +137,7 @@ const ArticleDetail = forwardRef<ArticleDetailHandle, Props>(function ArticleDet
 
   const refreshTags = () => {
     if (!entry?.id) return;
-    fetch(`/api/rss/tags/entries?entryId=${encodeURIComponent(entry.id)}`)
+    apiFetch(`/api/rss/tags/entries?entryId=${encodeURIComponent(entry.id)}`)
       .then(r => r.json())
       .then(tags => { if (Array.isArray(tags)) setUserTags(tags); })
       .catch(() => {});
@@ -168,7 +169,7 @@ const ArticleDetail = forwardRef<ArticleDetailHandle, Props>(function ArticleDet
       <div className="flex flex-wrap items-center gap-1 px-6 py-1">
         {userTags.map(tag => (
           <TagBadge key={tag.id} name={tag.name} color={tag.color} onRemove={() => {
-            fetch("/api/rss/tags/entries", {
+            apiFetch("/api/rss/tags/entries", {
               method: "DELETE",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ entryId: entry.id, tagId: tag.id }),

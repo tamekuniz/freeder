@@ -3,7 +3,7 @@ import path from "path";
 import crypto from "crypto";
 import { stripHtml } from "./html-strip";
 
-const DB_DIR = process.cwd();
+const DB_DIR = process.env.FREEDER_DB_DIR || process.cwd();
 const GLOBAL_DB_PATH = path.join(DB_DIR, "freeder-cache.db");
 
 // --- Global DB (users + extracted_content) ---

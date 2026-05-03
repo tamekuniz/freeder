@@ -1,0 +1,13 @@
+node_modules
+.next
+.git
+.gitignore
+.dockerignore
+Dockerfile
+README.md
+NOTES.md
+.claude
+*.db
+*.db-journal
+*.db-wal
+*.db-shm

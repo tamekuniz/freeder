@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { apiFetch } from "@/lib/base-path";
 import { useRouter } from "next/navigation";
 import { LogoWithText } from "@/components/Logo";
 
@@ -32,7 +33,7 @@ export default function LoginPage() {
       }
 
       // Check if user has Feedly token
-      const meRes = await fetch("/api/auth/me");
+      const meRes = await apiFetch("/api/auth/me");
       const me = await meRes.json();
 
       if (me.hasToken) {

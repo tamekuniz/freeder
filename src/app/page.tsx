@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { apiFetch } from "@/lib/base-path";
 import { useRouter } from "next/navigation";
 import type { FeedlyEntry, FeedlySubscription } from "@/lib/feedly";
 import { stripHtml } from "@/lib/html-strip";
@@ -127,9 +128,9 @@ export default function Home() {
       try {
         // Fetch auth, preferences, and RSS feeds all in parallel
         const [meRes, prefsRes, rssRes] = await Promise.all([
-          fetch("/api/auth/me"),
-          fetch("/api/preferences"),
-          fetch("/api/rss/feeds"),
+          apiFetch("/api/auth/me"),
+          apiFetch("/api/preferences"),
+          apiFetch("/api/rss/feeds"),
         ]);
 
         const me = await meRes.json();
@@ -179,12 +180,12 @@ export default function Home() {
           // Initial crawl if user has feeds but no cached entries yet
           if (rssFeeds.length > 0 && Object.keys(countMap).length === 0) {
             setInitialCrawlStatus("登録されたフィードのアーティクルを取得しています......");
-            fetch("/api/rss/crawl", { method: "POST" }).then(async (crawlRes) => {
+            apiFetch("/api/rss/crawl", { method: "POST" }).then(async (crawlRes) => {
               const crawlData = await crawlRes.json();
               setInitialCrawlStatus(
                 `${crawlData.crawled || 0}件のフィードから${crawlData.newEntries || 0}件の記事を取得しました\nフルテキストを取得中......`
               );
-              const refreshRes = await fetch("/api/rss/feeds");
+              const refreshRes = await apiFetch("/api/rss/feeds");
               if (refreshRes.ok) {
                 const refreshed = await refreshRes.json();
                 const newCounts: Record<string, number> = {};
@@ -209,7 +210,7 @@ export default function Home() {
 
   // Fetch user tags
   useEffect(() => {
-    fetch("/api/rss/tags")
+    apiFetch("/api/rss/tags")
       .then(r => r.json())
       .then(tags => { if (Array.isArray(tags)) setUserTags(tags); })
       .catch(() => {});
@@ -219,9 +220,9 @@ export default function Home() {
   useEffect(() => {
     const interval = setInterval(async () => {
       try {
-        await fetch("/api/rss/crawl", { method: "POST" });
+        await apiFetch("/api/rss/crawl", { method: "POST" });
         // Reload unread counts
-        const rssRes = await fetch("/api/rss/feeds");
+        const rssRes = await apiFetch("/api/rss/feeds");
         if (rssRes.ok) {
           const rssFeeds = await rssRes.json();
           const countMap: Record<string, number> = {};
@@ -243,7 +244,7 @@ export default function Home() {
     async function loadEntries() {
       try {
         const params = feedIds!.map(id => `streamId=${encodeURIComponent(id)}`).join("&");
-        const res = await fetch(`/api/rss/streams?${params}`);
+        const res = await apiFetch(`/api/rss/streams?${params}`);
         const data = await res.json();
         if (data.error) throw new Error(data.error);
         const items = data.items || [];
@@ -272,7 +273,7 @@ export default function Home() {
         }));
       }
       // Mark as read in local DB
-      fetch("/api/rss/markers", {
+      apiFetch("/api/rss/markers", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -321,7 +322,7 @@ export default function Home() {
       const params = new URLSearchParams({ url });
       if (force) params.set("force", "1");
 
-      fetch(`/api/extract?${params}`)
+      apiFetch(`/api/extract?${params}`)
         .then((r) => r.json())
         .then((data) => {
           if (onCancel?.()) return;
@@ -391,7 +392,7 @@ export default function Home() {
     setTranslating(true);
     try {
       const textContent = stripHtml(content).slice(0, 8000);
-      const res = await fetch("/api/ai/chat", {
+      const res = await apiFetch("/api/ai/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -413,7 +414,7 @@ export default function Home() {
   const handleToggleUnread = useCallback(
     (entry: FeedlyEntry) => {
       const action = entry.unread ? "markAsRead" : "keepUnread";
-      fetch("/api/rss/markers", {
+      apiFetch("/api/rss/markers", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action, entryIds: [entry.id], feedId: entry.origin?.streamId }),
@@ -440,7 +441,7 @@ export default function Home() {
   const handleToggleStar = useCallback(
     (entry: FeedlyEntry) => {
       const isStarred = entry.tags?.some((t) => t.id.includes("global.saved"));
-      fetch("/api/rss/markers", {
+      apiFetch("/api/rss/markers", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -476,7 +477,7 @@ export default function Home() {
     setSyncing(true);
     try {
       // Crawl selected feed or all feeds
-      await fetch("/api/rss/crawl", {
+      await apiFetch("/api/rss/crawl", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(selectedFeedId ? { feedId: selectedFeedId } : {}),
@@ -486,7 +487,7 @@ export default function Home() {
       const feedIds = selectedFolderFeedIds || (selectedFeedId ? [selectedFeedId] : null);
       if (feedIds && feedIds.length > 0) {
         const params = feedIds.map(id => `streamId=${encodeURIComponent(id)}`).join("&");
-        const streamRes = await fetch(`/api/rss/streams?${params}`);
+        const streamRes = await apiFetch(`/api/rss/streams?${params}`);
         const data = await streamRes.json();
         if (data.error) throw new Error(data.error);
         const items = data.items || [];
@@ -495,7 +496,7 @@ export default function Home() {
       }
 
       // Reload unread counts
-      const feedsRes = await fetch("/api/rss/feeds");
+      const feedsRes = await apiFetch("/api/rss/feeds");
       const feeds = await feedsRes.json();
       const countMap: Record<string, number> = {};
       for (const f of feeds) {
@@ -513,14 +514,14 @@ export default function Home() {
   const handleRefreshSingleFeed = useCallback(async (feedId: string) => {
     setSyncing(true);
     try {
-      await fetch("/api/rss/crawl", {
+      await apiFetch("/api/rss/crawl", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ feedId }),
       });
       // If the refreshed feed is currently selected, reload its entries
       if (feedId === selectedFeedId) {
-        const streamRes = await fetch(`/api/rss/streams?streamId=${encodeURIComponent(feedId)}`);
+        const streamRes = await apiFetch(`/api/rss/streams?streamId=${encodeURIComponent(feedId)}`);
         const data = await streamRes.json();
         if (!data.error) {
           const items = data.items || [];
@@ -528,7 +529,7 @@ export default function Home() {
         }
       }
       // Reload unread counts
-      const feedsRes = await fetch("/api/rss/feeds");
+      const feedsRes = await apiFetch("/api/rss/feeds");
       const feeds = await feedsRes.json();
       const countMap: Record<string, number> = {};
       for (const f of feeds) {
@@ -545,7 +546,7 @@ export default function Home() {
   // Delete a feed (from context menu)
   const handleDeleteFeed = useCallback(async (feedId: string) => {
     try {
-      await fetch(`/api/rss/feeds?feedId=${encodeURIComponent(feedId)}`, { method: "DELETE" });
+      await apiFetch(`/api/rss/feeds?feedId=${encodeURIComponent(feedId)}`, { method: "DELETE" });
       setSubscriptions(prev => prev.filter(s => s.id !== feedId));
       if (selectedFeedId === feedId) {
         setSelectedFeedId(null);
@@ -580,7 +581,7 @@ export default function Home() {
         const feedTitle = subscriptions.find((s) => s.id === selectedFeedId)?.title || "このフィード";
         if (!window.confirm(`「${feedTitle}」の未読 ${unreadEntries.length} 件をすべて既読にしますか？`)) return;
         const entryIds = unreadEntries.map((en) => en.id);
-        fetch("/api/rss/markers", {
+        apiFetch("/api/rss/markers", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ action: "markAsRead", entryIds }),
@@ -634,7 +635,7 @@ export default function Home() {
         e.preventDefault();
         setFontSizeLevel((prev) => {
           const next = Math.min(prev + 1, 4);
-          fetch("/api/preferences", {
+          apiFetch("/api/preferences", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ key: "font-size-level", value: String(next) }),
@@ -647,7 +648,7 @@ export default function Home() {
         e.preventDefault();
         setFontSizeLevel((prev) => {
           const next = Math.max(prev - 1, 0);
-          fetch("/api/preferences", {
+          apiFetch("/api/preferences", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ key: "font-size-level", value: String(next) }),
@@ -729,7 +730,7 @@ export default function Home() {
         const folderLabel = selectedFolderLabel || sortedFeeds[feedIndex]?.category || "Uncategorized";
         setCollapsedFolders((prev) => {
           const next = { ...prev, [folderLabel]: !prev[folderLabel] };
-          fetch("/api/preferences", {
+          apiFetch("/api/preferences", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ key: "collapsed-folders", value: JSON.stringify(next) }),
@@ -785,7 +786,7 @@ export default function Home() {
   const handleToggleUnreadOnly = useCallback(() => {
     setShowUnreadOnly((prev) => {
       const next = !prev;
-      fetch("/api/preferences", {
+      apiFetch("/api/preferences", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ key: "unread-only", value: String(next) }),
@@ -816,7 +817,7 @@ export default function Home() {
       return updated;
     });
     // Persist to server
-    fetch("/api/rss/feeds", {
+    apiFetch("/api/rss/feeds", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ updates }),
@@ -826,7 +827,7 @@ export default function Home() {
   const handleToggleFolder = useCallback((label: string) => {
     setCollapsedFolders((prev) => {
       const next = { ...prev, [label]: !prev[label] };
-      fetch("/api/preferences", {
+      apiFetch("/api/preferences", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ key: "collapsed-folders", value: JSON.stringify(next) }),
@@ -914,7 +915,7 @@ export default function Home() {
         onSelectTag={(tagId) => {
           setSelectedTagId(tagId);
           if (tagId) {
-            fetch(`/api/rss/tags/entries?tagId=${tagId}`)
+            apiFetch(`/api/rss/tags/entries?tagId=${tagId}`)
               .then(r => r.json())
               .then(entries => {
                 if (Array.isArray(entries)) {
@@ -926,7 +927,7 @@ export default function Home() {
           }
         }}
         onLogout={async () => {
-          await fetch("/api/auth/logout", { method: "POST" });
+          await apiFetch("/api/auth/logout", { method: "POST" });
           router.push("/login");
         }}
         width={feedPaneWidth}
@@ -1033,7 +1034,7 @@ export default function Home() {
             {([["feed", "FEED"], ["article", "ARTICLE"]] as const).map(([key, label]) => (
               <button
                 key={key}
-                onClick={() => { setSearchTarget(key); fetch("/api/preferences", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: "search-target", value: key }) }); }}
+                onClick={() => { setSearchTarget(key); apiFetch("/api/preferences", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: "search-target", value: key }) }); }}
                 className={`px-2 py-0.5 transition-colors ${searchTarget === key ? "bg-white text-orange-600" : "text-white/90 hover:text-white"}`}
               >
                 {label}
@@ -1045,7 +1046,7 @@ export default function Home() {
             {([["all", "ALL"], ["unread", "UNREAD"], ["read", "READ"]] as const).map(([key, label]) => (
               <button
                 key={key}
-                onClick={() => { setReadStatusFilter(key); fetch("/api/preferences", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: "read-status-filter", value: key }) }); }}
+                onClick={() => { setReadStatusFilter(key); apiFetch("/api/preferences", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: "read-status-filter", value: key }) }); }}
                 className={`px-2 py-0.5 transition-colors ${readStatusFilter === key ? "bg-white text-orange-600" : "text-white/90 hover:text-white"}`}
               >
                 {label}

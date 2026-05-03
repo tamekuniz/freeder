@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import { apiFetch } from "@/lib/base-path";
 import { stripHtml } from "@/lib/html-strip";
 
 interface ChatMessage {
@@ -104,7 +105,7 @@ export default function AIPanel({
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch("/api/preferences");
+        const res = await apiFetch("/api/preferences");
         if (!res.ok) return;
         const prefs = await res.json();
         if (prefs["ollama-url"]) setOllamaUrl(prefs["ollama-url"]);
@@ -125,7 +126,7 @@ export default function AIPanel({
   const fetchModels = useCallback(async () => {
     setModelsLoading(true);
     try {
-      const res = await fetch("/api/ai/models");
+      const res = await apiFetch("/api/ai/models");
       if (!res.ok) return;
       const data = await res.json();
       const providers: ProviderConfig[] = data.providers || [];
@@ -171,7 +172,7 @@ export default function AIPanel({
   // Save preference helper
   const savePref = async (key: string, value: string) => {
     try {
-      await fetch("/api/preferences", {
+      await apiFetch("/api/preferences", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ key, value }),
@@ -192,7 +193,7 @@ export default function AIPanel({
     abortRef.current = controller;
 
     try {
-      const res = await fetch("/api/ai/chat", {
+      const res = await apiFetch("/api/ai/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ provider, model, messages }),

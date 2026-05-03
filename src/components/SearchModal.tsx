@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { apiFetch } from "@/lib/base-path";
 import type { FeedlyEntry } from "@/lib/feedly";
 
 interface SearchResult {
@@ -50,7 +51,7 @@ export default function SearchModal({ onClose, onSelectEntry, streamIds, scopeLa
       try {
         const params = new URLSearchParams({ q: query, limit: "30" });
         if (streamIds && streamIds.length > 0) params.set("streamIds", streamIds.join(","));
-        const res = await fetch(`/api/search?${params}`);
+        const res = await apiFetch(`/api/search?${params}`);
         const data = await res.json();
         setResults(data.results || []);
         setSelectedIdx(0);

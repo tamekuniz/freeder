@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect } from "react";
+import { apiFetch } from "@/lib/base-path";
 import TagBadge from "./TagBadge";
 
 interface LookalikeResult {
@@ -21,7 +22,7 @@ export default function LookalikeSection({ entryId, onSelectEntry }: LookalikeSe
     if (!entryId) { setResults([]); setAiTags([]); return; }
 
     setLoading(true);
-    fetch(`/api/rss/lookalike?entryId=${encodeURIComponent(entryId)}&minCommon=2&limit=5`)
+    apiFetch(`/api/rss/lookalike?entryId=${encodeURIComponent(entryId)}&minCommon=2&limit=5`)
       .then(r => r.json())
       .then(data => {
         setResults(data.results || []);
