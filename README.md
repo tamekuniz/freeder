@@ -130,3 +130,58 @@ Xcode Command Line Tools をインストールしてください: `xcode-select 
 
 **LAN内の他端末からアクセスしたい場合：**
 `npm run dev -- -H 0.0.0.0` で起動してください。
+
+## 開発・デプロイフロー（自宅サーバ）
+
+編集場所と build source を物理分離し、「dev で動作確認 → main へ merge → prd 反映」のフローで運用する。
+
+### 構成
+
+| 用途 | パス | branch | 役割 |
+|------|------|--------|------|
+| 編集本拠地 | `~/GitHub/tamekuniz/freeder` | main / dev 切替 | コード編集・commit・push の起点 |
+| prd ビルドソース | `~/server/repos/freeder-prd` | main 固定 | `freeder` コンテナの build context（編集しない、pull のみ） |
+| dev ビルドソース | `~/server/repos/freeder-dev` | dev 固定 | `freeder-dev` コンテナの build context（worktree、編集しない、pull のみ） |
+
+`freeder-prd` は通常の clone、`freeder-dev` は `freeder-prd` の git worktree（`.git` を共有してディスク節約）。
+
+### URL
+
+- prd: `https://316006.com/freeder/`
+- dev: `https://dev.316006.com/freeder/`
+
+### 開発フロー
+
+```bash
+# 1. dev branch で開発
+cd ~/GitHub/tamekuniz/freeder
+git checkout dev
+# ...コード編集...
+git add -A && git commit -m "feat: ..."
+git push origin dev
+
+# 2. dev 環境に反映 → 動作確認
+cd ~/server/repos/freeder-dev
+git pull origin dev
+cd ~/server
+docker compose build freeder-dev && docker compose up -d freeder-dev
+# ブラウザで https://dev.316006.com/freeder/ を確認
+
+# 3. OK なら main へ merge
+cd ~/GitHub/tamekuniz/freeder
+git checkout main
+git merge dev
+git push origin main
+
+# 4. prd 反映
+cd ~/server/repos/freeder-prd
+git pull origin main
+cd ~/server
+docker compose build freeder && docker compose up -d freeder
+# ブラウザで https://316006.com/freeder/ を確認
+```
+
+### 注意
+
+- `.env.local` は gitignore 対象。新 worktree を作るときは既存の `.env.local` をコピー
+- `compose.yaml` は `~/server/compose.yaml`（git 管理外）。build context が `./repos/freeder-{prd,dev}` を指す
