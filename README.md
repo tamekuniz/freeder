@@ -130,3 +130,5 @@ Xcode Command Line Tools をインストールしてください: `xcode-select 
 
 **LAN内の他端末からアクセスしたい場合：**
 `npm run dev -- -H 0.0.0.0` で起動してください。
+
+<!-- DEV BUILD MARKER (dev branch only, for environment identification) -->
