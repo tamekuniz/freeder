@@ -3,7 +3,7 @@ import { getIronSession } from "iron-session";
 import { SessionData, sessionOptions } from "@/lib/session";
 
 const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
-const publicPaths = ["/login", "/setup", "/api/auth"];
+const publicPaths = ["/login", "/setup", "/api/auth", "/dev.txt"];
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
